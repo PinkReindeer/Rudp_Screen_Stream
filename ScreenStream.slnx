@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Engine/Engine.csproj" />
+  <Project Path="HostApp/HostApp.csproj" />
+  <Project Path="Protocol/Protocol.csproj" />
+  <Project Path="ViewerApp/ViewerApp.csproj" />
+</Solution>
