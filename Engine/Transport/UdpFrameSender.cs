@@ -1,4 +1,4 @@
-﻿using System.Buffers;
+using System.Buffers;
 using System.Net;
 using System.Net.Sockets;
 using Protocol.Packets;
@@ -20,6 +20,21 @@ public sealed class UdpFrameSender : IDisposable
         {
             SendBufferSize = 4 * 1024 * 1024 // 4 MB
         };
+    }
+
+    public async ValueTask SendProbeAsync(IPEndPoint targetEndpoint, CancellationToken ct = default)
+    {
+        byte[] packetBuffer = ArrayPool<byte>.Shared.Rent(RudpHeader.Size);
+        try
+        {
+            var header = new RudpHeader(0, 0, 1, PacketFlags.Probe, (uint)Environment.TickCount64, 0);
+            header.WriteTo(packetBuffer.AsSpan(0, RudpHeader.Size));
+            await _socket.SendToAsync(packetBuffer.AsMemory(0, RudpHeader.Size), SocketFlags.None, targetEndpoint, ct);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(packetBuffer);
+        }
     }
 
     public async ValueTask<ushort> SendFrameAsync(ReadOnlyMemory<byte> jpegBytes, IPEndPoint targetEndpoint, CancellationToken ct = default)

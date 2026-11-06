@@ -1,4 +1,4 @@
-﻿using System.Buffers;
+using System.Buffers;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Channels;
@@ -9,21 +9,21 @@ namespace Engine.Transport;
 
 public sealed class UdpFrameReceiver : IDisposable
 {
-    private readonly Socket _socket;
+    private Socket? _socket;
     private readonly FrameReassembler _reassembler = new();
     private readonly Channel<CompletedFrame> _frameChannel;
     private CancellationTokenSource? _cts;
+    private readonly object _socketLock = new();
+
+    public event Action<IPEndPoint>? ProbeReceived;
 
     public ChannelReader<CompletedFrame> CompletedFrames => _frameChannel.Reader;
     public FrameReassembler Reassembler => _reassembler;
+    public int CurrentPort { get; private set; }
 
     public UdpFrameReceiver(int listenPort)
     {
-        _socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)
-        {
-            ReceiveBufferSize = 8 * 1024 * 1024 // 8 MB
-        };
-        _socket.Bind(new IPEndPoint(IPAddress.Any, listenPort));
+        CurrentPort = listenPort;
 
         _frameChannel = Channel.CreateBounded<CompletedFrame>(new BoundedChannelOptions(2)
         {
@@ -31,15 +31,47 @@ public sealed class UdpFrameReceiver : IDisposable
             SingleReader = true,
             FullMode = BoundedChannelFullMode.DropOldest
         }, droppedFrame => droppedFrame.Dispose());
+
+        BindAndStart(listenPort);
     }
 
-    public void StartReceiving()
+    public void Rebind(int newPort)
     {
-        _cts = new CancellationTokenSource();
-        _ = Task.Run(() => ReceiveLoopAsync(_cts.Token));
+        if (newPort == CurrentPort && _socket != null) return;
+        CurrentPort = newPort;
+        StopReceiving();
+        BindAndStart(newPort);
     }
 
-    private async Task ReceiveLoopAsync(CancellationToken ct)
+    private void BindAndStart(int port)
+    {
+        lock (_socketLock)
+        {
+            _socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)
+            {
+                ReceiveBufferSize = 8 * 1024 * 1024 // 8 MB
+            };
+            _socket.Bind(new IPEndPoint(IPAddress.Any, port));
+
+            _cts = new CancellationTokenSource();
+            _ = Task.Run(() => ReceiveLoopAsync(_socket, _cts.Token));
+        }
+    }
+
+    private void StopReceiving()
+    {
+        lock (_socketLock)
+        {
+            _cts?.Cancel();
+            _cts?.Dispose();
+            _cts = null;
+
+            _socket?.Dispose();
+            _socket = null;
+        }
+    }
+
+    private async Task ReceiveLoopAsync(Socket socket, CancellationToken ct)
     {
         byte[] recvBuffer = ArrayPool<byte>.Shared.Rent(RudpHeader.MaxPacketSize);
         EndPoint remoteEp = new IPEndPoint(IPAddress.Any, 0);
@@ -48,7 +80,17 @@ public sealed class UdpFrameReceiver : IDisposable
         {
             while (!ct.IsCancellationRequested)
             {
-                var result = await _socket.ReceiveFromAsync(recvBuffer.AsMemory(), SocketFlags.None, remoteEp, ct);
+                var result = await socket.ReceiveFromAsync(recvBuffer.AsMemory(), SocketFlags.None, remoteEp, ct);
+
+                if (result.ReceivedBytes >= RudpHeader.Size)
+                {
+                    var header = RudpHeader.ReadFrom(recvBuffer.AsSpan(0, RudpHeader.Size));
+                    if (header.Flags.HasFlag(PacketFlags.Probe))
+                    {
+                        ProbeReceived?.Invoke((IPEndPoint)remoteEp);
+                        continue;
+                    }
+                }
 
                 if (_reassembler.TryPushPacket(recvBuffer.AsSpan(0, result.ReceivedBytes), out var completedFrame))
                 {
@@ -57,6 +99,8 @@ public sealed class UdpFrameReceiver : IDisposable
             }
         }
         catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+        catch { }
         finally
         {
             ArrayPool<byte>.Shared.Return(recvBuffer);
@@ -65,8 +109,7 @@ public sealed class UdpFrameReceiver : IDisposable
 
     public void Dispose()
     {
-        _cts?.Cancel();
-        _socket.Dispose();
+        StopReceiving();
         _reassembler.Dispose();
     }
 }
