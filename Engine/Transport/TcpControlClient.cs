@@ -16,15 +16,12 @@ public sealed class TcpControlClient : IDisposable
 
     public bool IsConnected { get; private set; }
 
-    // ── Connect ───────────────────────────────────────────────────────────────
-
-    public async Task ConnectAsync(string host, int tcpPort, ushort myUdpPort,
-                                   CancellationToken ct = default)
+    public async Task ConnectAsync(string host, int tcpPort, ushort myUdpPort, CancellationToken ct = default)
     {
         Disconnect();
 
         using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        connectCts.CancelAfter(TimeSpan.FromSeconds(3)); // 3-second connection timeout
+        connectCts.CancelAfter(TimeSpan.FromSeconds(3));
 
         var tcp = new TcpClient { NoDelay = true };
         try
@@ -49,10 +46,8 @@ public sealed class TcpControlClient : IDisposable
             _stream = stream;
         }
 
-        // Send Connect command containing our UDP receiving port and target Host IP
-        await stream.WriteAsync(ControlProtocol.CmdConnect(myUdpPort, host), connectCts.Token);
+        await stream.WriteAsync(ControlProtocol.CmdConnect(myUdpPort), connectCts.Token);
 
-        // Wait for server Ack (with 3-second timeout)
         var resp = await ControlProtocol.ReadMessageAsync(stream, connectCts.Token);
         if (resp == null)
         {
@@ -73,7 +68,6 @@ public sealed class TcpControlClient : IDisposable
             throw new InvalidOperationException(message);
         }
 
-        // Handshake succeeded!
         lock (_lock)
         {
             IsConnected = true;
@@ -84,9 +78,6 @@ public sealed class TcpControlClient : IDisposable
         _cts = new CancellationTokenSource();
         _ = Task.Run(() => ReadLoopAsync(_cts.Token));
     }
-
-    public Task SendUdpProbeAckAsync(CancellationToken ct = default) =>
-        SendAsync(ControlProtocol.CmdUdpProbeAck(), ct);
 
     public Task SendStartStreamAsync(CancellationToken ct = default) =>
         SendAsync(ControlProtocol.CmdStart(), ct);
@@ -175,8 +166,5 @@ public sealed class TcpControlClient : IDisposable
         Disconnected?.Invoke();
     }
 
-    public void Dispose()
-    {
-        Disconnect();
-    }
+    public void Dispose() => Disconnect();
 }

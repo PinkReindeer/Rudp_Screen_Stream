@@ -11,27 +11,16 @@ public sealed class TcpControlServer : IDisposable
     private NetworkStream? _clientStream;
     private readonly object _streamLock = new();
 
-    public event Action<IPEndPoint, ushort>? ClientConnected; // RemoteEp, ViewerUdpPort
+    public event Action<IPEndPoint>? ClientConnected;
     public event Action? ClientDisconnected;
     public event Action? StartStreamRequested;
     public event Action? StopStreamRequested;
     public event Action<int>? QualityChangeRequested;
 
-    /// <summary>
-    /// Function to validate incoming client IP, UDP port, and target Host IP.
-    /// Returns (Valid: true, Error: "") if allowed, or (Valid: false, Error: "reason") to reject.
-    /// </summary>
-    public Func<IPAddress, ushort, string, (bool Valid, string Error)>? ClientValidator { get; set; }
-
-    /// <summary>
-    /// Callback to send a UDP probe packet to the viewer's UDP endpoint.
-    /// </summary>
-    public Func<IPEndPoint, Task>? UdpProbeSender { get; set; }
-
     public bool IsClientConnected { get; private set; }
     public int CurrentPort { get; private set; }
 
-    public TcpControlServer(int port = ControlProtocol.TcpControlPort)
+    public TcpControlServer(int port = ControlProtocol.DefaultTcpPort)
     {
         CurrentPort = port;
     }
@@ -86,14 +75,12 @@ public sealed class TcpControlServer : IDisposable
             lock (_streamLock) _clientStream = stream;
 
             var remoteEp = client.Client.RemoteEndPoint as IPEndPoint;
-            var localEp  = client.Client.LocalEndPoint as IPEndPoint;
             if (remoteEp == null) return;
 
             bool handshakeSuccess = false;
 
             try
             {
-                // 1. First message must be Connect
                 using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 handshakeCts.CancelAfter(TimeSpan.FromSeconds(3));
 
@@ -104,67 +91,19 @@ public sealed class TcpControlServer : IDisposable
                     return;
                 }
 
-                var (viewerUdpPort, targetHostIp) = ControlProtocol.ParseConnect(firstMsg.Value.Payload);
+                ushort viewerUdpPort = ControlProtocol.ParseConnect(firstMsg.Value.Payload);
+                var clientIp = remoteEp.Address.IsIPv4MappedToIPv6
+                    ? remoteEp.Address.MapToIPv4()
+                    : remoteEp.Address;
 
-                // 2. Validate Target Host IP: Ensure viewer did not dial an invalid IP
-                var validHostIps = ControlProtocol.GetLocalHostIps();
-                if (!string.IsNullOrEmpty(targetHostIp) && !validHostIps.Contains(targetHostIp))
-                {
-                    await SendResponseAsync(ControlProtocol.RespAckError(
-                        $"Host IP mismatch: Viewer dialed '{targetHostIp}', but this Host IP is {string.Join(" or ", validHostIps)}!"), ct);
-                    return;
-                }
+                var clientUdpEndpoint = new IPEndPoint(clientIp, viewerUdpPort);
 
-                if (localEp != null)
-                {
-                    string localIpStr = localEp.Address.IsIPv4MappedToIPv6
-                        ? localEp.Address.MapToIPv4().ToString()
-                        : localEp.Address.ToString();
-
-                    if (!validHostIps.Contains(localIpStr))
-                    {
-                        await SendResponseAsync(ControlProtocol.RespAckError(
-                            $"Host IP mismatch: Connected to '{localIpStr}', which is not a valid Host address!"), ct);
-                        return;
-                    }
-                }
-
-                // 3. Validate Viewer IP and UDP Port against Host configuration
-                if (ClientValidator != null)
-                {
-                    var (valid, errorMsg) = ClientValidator(remoteEp.Address, viewerUdpPort, targetHostIp);
-                    if (!valid)
-                    {
-                        await SendResponseAsync(ControlProtocol.RespAckError(errorMsg), ct);
-                        return;
-                    }
-                }
-
-                // 4. UDP Probe check
-                if (UdpProbeSender != null)
-                {
-                    var viewerUdpEp = new IPEndPoint(remoteEp.Address, viewerUdpPort);
-                    await UdpProbeSender(viewerUdpEp);
-
-                    using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                    probeCts.CancelAfter(TimeSpan.FromSeconds(2));
-
-                    var probeResp = await ControlProtocol.ReadMessageAsync(stream, probeCts.Token);
-                    if (probeResp == null || probeResp.Value.Type != (byte)ControlCommandType.UdpProbeAck)
-                    {
-                        await SendResponseAsync(ControlProtocol.RespAckError($"UDP check failed: UDP probe packet not received on port {viewerUdpPort}"), ct);
-                        return;
-                    }
-                }
-
-                // 5. Handshake succeeded!
                 handshakeSuccess = true;
                 IsClientConnected = true;
                 await SendResponseAsync(ControlProtocol.RespAckOk(), ct);
 
-                ClientConnected?.Invoke(remoteEp, viewerUdpPort);
+                ClientConnected?.Invoke(clientUdpEndpoint);
 
-                // Command loop
                 while (!ct.IsCancellationRequested)
                 {
                     var msg = await ControlProtocol.ReadMessageAsync(stream, ct);
@@ -204,9 +143,9 @@ public sealed class TcpControlServer : IDisposable
             case ControlCommandType.SetQuality:
                 if (payload.Length >= 1)
                 {
-                    int q = Math.Clamp((int)payload[0], 1, 100);
-                    QualityChangeRequested?.Invoke(q);
-                    await SendResponseAsync(ControlProtocol.RespInfo($"Quality={q}"), ct);
+                    int quality = Math.Clamp((int)payload[0], 1, 100);
+                    QualityChangeRequested?.Invoke(quality);
+                    await SendResponseAsync(ControlProtocol.RespInfo($"Quality={quality}"), ct);
                 }
                 break;
 
@@ -240,8 +179,5 @@ public sealed class TcpControlServer : IDisposable
         }
     }
 
-    public void Dispose()
-    {
-        Stop();
-    }
+    public void Dispose() => Stop();
 }

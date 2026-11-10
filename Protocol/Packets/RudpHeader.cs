@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 
 namespace Protocol.Packets;
@@ -7,11 +7,10 @@ namespace Protocol.Packets;
 public enum PacketFlags : byte
 {
     None = 0,
-    Data = 1 << 0, 
-    Ack = 1 << 1,  
-    Nack = 1 << 2,    
-    Keyframe = 1 << 3,
-    Probe = 1 << 4   
+    Data = 1 << 0,  // 0x01
+    Ack = 1 << 1,  // 0x02
+    Nack = 1 << 2,  // 0x04
+    Keyframe = 1 << 3  // 0x08
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]

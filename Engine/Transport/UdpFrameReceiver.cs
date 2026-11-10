@@ -13,9 +13,7 @@ public sealed class UdpFrameReceiver : IDisposable
     private readonly FrameReassembler _reassembler = new();
     private readonly Channel<CompletedFrame> _frameChannel;
     private CancellationTokenSource? _cts;
-    private readonly object _socketLock = new();
-
-    public event Action<IPEndPoint>? ProbeReceived;
+    private readonly object _lock = new();
 
     public ChannelReader<CompletedFrame> CompletedFrames => _frameChannel.Reader;
     public FrameReassembler Reassembler => _reassembler;
@@ -37,38 +35,37 @@ public sealed class UdpFrameReceiver : IDisposable
 
     public void Rebind(int newPort)
     {
-        if (newPort == CurrentPort && _socket != null) return;
-        CurrentPort = newPort;
-        StopReceiving();
-        BindAndStart(newPort);
+        lock (_lock)
+        {
+            if (newPort == CurrentPort && _socket != null) return;
+            CurrentPort = newPort;
+            StopReceiving();
+            BindAndStart(newPort);
+        }
     }
 
     private void BindAndStart(int port)
     {
-        lock (_socketLock)
+        _socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)
         {
-            _socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)
-            {
-                ReceiveBufferSize = 8 * 1024 * 1024 // 8 MB
-            };
-            _socket.Bind(new IPEndPoint(IPAddress.Any, port));
+            ReceiveBufferSize = 8 * 1024 * 1024 // 8 MB
+        };
+        _socket.Bind(new IPEndPoint(IPAddress.Any, port));
 
-            _cts = new CancellationTokenSource();
-            _ = Task.Run(() => ReceiveLoopAsync(_socket, _cts.Token));
-        }
+        _cts = new CancellationTokenSource();
+        var socket = _socket;
+        var token = _cts.Token;
+        _ = Task.Run(() => ReceiveLoopAsync(socket, token));
     }
 
     private void StopReceiving()
     {
-        lock (_socketLock)
-        {
-            _cts?.Cancel();
-            _cts?.Dispose();
-            _cts = null;
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = null;
 
-            _socket?.Dispose();
-            _socket = null;
-        }
+        _socket?.Dispose();
+        _socket = null;
     }
 
     private async Task ReceiveLoopAsync(Socket socket, CancellationToken ct)
@@ -81,16 +78,6 @@ public sealed class UdpFrameReceiver : IDisposable
             while (!ct.IsCancellationRequested)
             {
                 var result = await socket.ReceiveFromAsync(recvBuffer.AsMemory(), SocketFlags.None, remoteEp, ct);
-
-                if (result.ReceivedBytes >= RudpHeader.Size)
-                {
-                    var header = RudpHeader.ReadFrom(recvBuffer.AsSpan(0, RudpHeader.Size));
-                    if (header.Flags.HasFlag(PacketFlags.Probe))
-                    {
-                        ProbeReceived?.Invoke((IPEndPoint)remoteEp);
-                        continue;
-                    }
-                }
 
                 if (_reassembler.TryPushPacket(recvBuffer.AsSpan(0, result.ReceivedBytes), out var completedFrame))
                 {
@@ -109,7 +96,10 @@ public sealed class UdpFrameReceiver : IDisposable
 
     public void Dispose()
     {
-        StopReceiving();
-        _reassembler.Dispose();
+        lock (_lock)
+        {
+            StopReceiving();
+            _reassembler.Dispose();
+        }
     }
 }
