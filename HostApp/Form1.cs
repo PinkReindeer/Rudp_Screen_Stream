@@ -1,5 +1,5 @@
-using System.Drawing.Imaging;
 using System.Net;
+using Engine.Capture;
 using Engine.Transport;
 
 namespace HostApp;
@@ -7,109 +7,210 @@ namespace HostApp;
 public partial class Form1 : Form
 {
     private readonly UdpFrameSender _sender = new();
-    private readonly TextBox _txtIp = new() { Text = "127.0.0.1", Width = 110 };
-    private readonly NumericUpDown _numPort = new() { Minimum = 1000, Maximum = 65535, Value = 9000, Width = 75 };
-    private readonly Button _btnSendSingle = new() { Text = "1. Send 1 Static Frame (~70KB)", AutoSize = true, BackColor = Color.LightSkyBlue };
-    private readonly Button _btnToggleStream = new() { Text = "2. Start 30 FPS Stream ", AutoSize = true, BackColor = Color.LightGreen };
-    private readonly Label _lblStats = new() { AutoSize = true, Font = new Font("Consolas", 10, FontStyle.Bold) };
+    private readonly ScreenCapturer _capturer = new();
+    private readonly TcpControlServer _tcpServer = new();
 
     private CancellationTokenSource? _streamCts;
-    private int _testFrameTick;
+    private IPEndPoint? _connectedClientEndpoint;
+
+    private readonly TextBox _txtViewerIp = new() { Text = "127.0.0.1", Width = 115 };
+    private readonly NumericUpDown _numUdpPort = new() { Minimum = 1000, Maximum = 65535, Value = 9000, Width = 75 };
+    private readonly NumericUpDown _numTcpPort = new() { Minimum = 1000, Maximum = 65535, Value = 9001, Width = 75 };
+    private readonly TrackBar _trkQuality = new() { Minimum = 10, Maximum = 100, Value = 85, Width = 180, TickFrequency = 10 };
+    private readonly Label _lblQuality = new() { AutoSize = true, Text = "JPEG Quality: 85%" };
+    private readonly Button _btnStartStream = new() { Text = "▶ Start Stream", AutoSize = true, BackColor = Color.LightGreen };
+    private readonly Button _btnStopStream = new() { Text = "■ Stop Stream", AutoSize = true, BackColor = Color.Salmon, Enabled = false };
+    private readonly Button _btnDisconnectClient = new() { Text = "✕ Disconnect Client", AutoSize = true, BackColor = Color.LightCoral, Enabled = false };
+    private readonly Label _lblClientStatus = new() { AutoSize = true, Text = "● No client connected", ForeColor = Color.OrangeRed };
+    private readonly Label _lblStats = new()
+    {
+        Dock = DockStyle.Bottom,
+        Height = 36,
+        BackColor = Color.FromArgb(20, 24, 35),
+        ForeColor = Color.LimeGreen,
+        Font = new Font("Consolas", 9, FontStyle.Bold),
+        TextAlign = ContentAlignment.MiddleLeft,
+        Padding = new Padding(8, 0, 0, 0)
+    };
+    private readonly System.Windows.Forms.Timer _statsTimer = new() { Interval = 500 };
 
     public Form1()
     {
         InitializeComponent();
-        Text = "RUDP Host App - Milestone 1 (Sender)";
-        Size = new Size(620, 220);
+        Text = "RUDP Host App";
+        Size = new Size(720, 280);
+        MinimumSize = Size;
 
-        var flow = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(15), FlowDirection = FlowDirection.TopDown };
-        var row1 = new FlowLayoutPanel { AutoSize = true };
-        row1.Controls.AddRange([new Label { Text = "Target IP:", AutoSize = true, Padding = new Padding(0, 5, 0, 0) }, _txtIp,
-                                new Label { Text = "UDP Port:", AutoSize = true, Padding = new Padding(10, 5, 0, 0) }, _numPort]);
+        BuildUi();
+        HookEvents();
 
-        var row2 = new FlowLayoutPanel { AutoSize = true, Padding = new Padding(0, 10, 0, 10) };
-        row2.Controls.AddRange([_btnSendSingle, _btnToggleStream]);
-
-        flow.Controls.AddRange([row1, row2, _lblStats]);
-        Controls.Add(flow);
-
-        _btnSendSingle.Click += async (_, _) => await SendOneSyntheticFrameAsync();
-        _btnToggleStream.Click += (_, _) => ToggleContinuousStream();
+        _tcpServer.Start((int)_numTcpPort.Value);
     }
 
-    private async Task SendOneSyntheticFrameAsync()
+    private void BuildUi()
     {
-        var ep = new IPEndPoint(IPAddress.Parse(_txtIp.Text), (int)_numPort.Value);
-        byte[] jpegBytes = GenerateSyntheticJpegFrame(++_testFrameTick);
-        ushort fragments = await _sender.SendFrameAsync(jpegBytes, ep);
-
-        _lblStats.Text = $"[Sent Frame #{_testFrameTick}] Size: {jpegBytes.Length / 1024.0:F1} KB | " +
-                         $"Fragments: {fragments} UDP packets | Total Packets: {_sender.TotalPacketsSent}";
-    }
-
-    private void ToggleContinuousStream()
-    {
-        if (_streamCts != null)
+        var flow = new FlowLayoutPanel
         {
-            _streamCts.Cancel();
-            _streamCts = null;
-            _btnToggleStream.Text = "2. Start 30 FPS Stream";
-            _btnToggleStream.BackColor = Color.LightGreen;
-            return;
+            Dock = DockStyle.Fill,
+            Padding = new Padding(12, 10, 12, 4),
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false
+        };
+
+        var row1 = Row();
+        row1.Controls.AddRange([
+            Label("Viewer IP:"), _txtViewerIp,
+            Label("UDP Port:"), _numUdpPort,
+            Label("TCP Port:"), _numTcpPort
+        ]);
+
+        var row2 = Row();
+        row2.Controls.AddRange([_lblQuality, _trkQuality]);
+
+        var row3 = Row();
+        row3.Controls.AddRange([_btnStartStream, _btnStopStream, _btnDisconnectClient, _lblClientStatus]);
+
+        flow.Controls.AddRange([row1, row2, row3]);
+        Controls.Add(flow);
+        Controls.Add(_lblStats);
+    }
+
+    private static FlowLayoutPanel Row() =>
+        new() { AutoSize = true, Margin = new Padding(0, 4, 0, 4) };
+
+    private static Label Label(string text) =>
+        new() { Text = text, AutoSize = true, Padding = new Padding(4, 5, 0, 0) };
+
+    private void HookEvents()
+    {
+        _numTcpPort.ValueChanged += (_, _) =>
+        {
+            if (!_tcpServer.IsClientConnected)
+            {
+                _tcpServer.Start((int)_numTcpPort.Value);
+            }
+        };
+
+        _trkQuality.ValueChanged += (_, _) =>
+        {
+            _lblQuality.Text = $"JPEG Quality: {_trkQuality.Value}%";
+            _capturer.JpegQuality = _trkQuality.Value;
+        };
+
+        _btnStartStream.Click += (_, _) => StartStreaming();
+        _btnStopStream.Click += (_, _) => StopStreaming();
+        _btnDisconnectClient.Click += (_, _) => _tcpServer.DisconnectClient();
+
+        _tcpServer.ClientConnected += clientUdpEp => Invoke(() =>
+        {
+            _connectedClientEndpoint = clientUdpEp;
+            _txtViewerIp.Text = clientUdpEp.Address.ToString();
+            _numUdpPort.Value = clientUdpEp.Port;
+            _lblClientStatus.Text = $"● Viewer connected ({clientUdpEp})";
+            _lblClientStatus.ForeColor = Color.LimeGreen;
+
+            _txtViewerIp.Enabled = false;
+            _numUdpPort.Enabled = false;
+            _numTcpPort.Enabled = false;
+            _btnDisconnectClient.Enabled = true;
+        });
+
+        _tcpServer.ClientDisconnected += () => Invoke(() =>
+        {
+            _connectedClientEndpoint = null;
+            _lblClientStatus.Text = "● No client connected";
+            _lblClientStatus.ForeColor = Color.OrangeRed;
+
+            _txtViewerIp.Enabled = true;
+            _numUdpPort.Enabled = true;
+            _numTcpPort.Enabled = true;
+            _btnDisconnectClient.Enabled = false;
+
+            StopStreaming();
+        });
+
+        _tcpServer.StartStreamRequested += () => Invoke(StartStreaming);
+        _tcpServer.StopStreamRequested += () => Invoke(StopStreaming);
+        _tcpServer.QualityChangeRequested += q => Invoke(() =>
+        {
+            _trkQuality.Value = Math.Clamp(q, _trkQuality.Minimum, _trkQuality.Maximum);
+            _capturer.JpegQuality = q;
+        });
+
+        _statsTimer.Tick += (_, _) => RefreshStats();
+        _statsTimer.Start();
+    }
+
+    private void StartStreaming()
+    {
+        if (_streamCts != null) return;
+
+        IPEndPoint endpoint;
+        if (_connectedClientEndpoint != null)
+        {
+            endpoint = _connectedClientEndpoint;
+        }
+        else
+        {
+            if (!IPAddress.TryParse(_txtViewerIp.Text.Trim(), out var targetIp))
+            {
+                MessageBox.Show($"Invalid Viewer IP '{_txtViewerIp.Text}'", "Streaming Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            endpoint = new IPEndPoint(targetIp, (int)_numUdpPort.Value);
         }
 
         _streamCts = new CancellationTokenSource();
-        _btnToggleStream.Text = "Stop 30 FPS Stream";
-        _btnToggleStream.BackColor = Color.Salmon;
+        _btnStartStream.Enabled = false;
+        _btnStopStream.Enabled = true;
 
         var token = _streamCts.Token;
-        _ = Task.Run(async () =>
-        {
-            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(33)); // ~30 FPS
-            while (await timer.WaitForNextTickAsync(token))
-            {
-                await Invoke(async () => await SendOneSyntheticFrameAsync());
-            }
-        }, token);
+        _ = Task.Run(() => StreamLoopAsync(endpoint, token), token);
     }
 
-    /// <summary>
-    /// Creates a synthetic 1280x720 image with moving patterns + a clock to compress into a JPEG of approximately 60-85KB.
-    /// </summary>
-    private static byte[] GenerateSyntheticJpegFrame(int tick)
+    private void StopStreaming()
     {
-        using var bmp = new Bitmap(1280, 720);
-        using (var g = Graphics.FromImage(bmp))
+        if (_streamCts == null) return;
+
+        _streamCts.Cancel();
+        _streamCts = null;
+        _btnStartStream.Enabled = true;
+        _btnStopStream.Enabled = false;
+    }
+
+    private async Task StreamLoopAsync(IPEndPoint ep, CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(33)); // ~30 FPS
+        while (!ct.IsCancellationRequested && await timer.WaitForNextTickAsync(ct))
         {
-            g.Clear(Color.FromArgb(20, 24, 35));
-
-            // Draw moving sine-wave patterns to create a large byte footprint (~70KB after JPEG compression)
-            for (int i = 0; i < 60; i++)
+            try
             {
-                int x = (i * 35 + tick * 8) % 1280;
-                int y = (int)(Math.Sin((i + tick * 0.1)) * 250 + 360);
-                using var brush = new SolidBrush(Color.FromArgb(180, (i * 40) % 255, (i * 85) % 255, 220));
-                g.FillEllipse(brush, x, y - 60, 120, 120);
+                using var ms = _capturer.CaptureJpeg();
+                var frameBytes = ms.ToArray();
+                await _sender.SendFrameAsync(frameBytes, ep, ct);
             }
-
-            using var fontTitle = new Font("Consolas", 32, FontStyle.Bold);
-            using var fontSub = new Font("Consolas", 18, FontStyle.Regular);
-            g.DrawString($"RUDP MILESTONE 1 - FRAME #{tick}", fontTitle, Brushes.White, 40, 40);
-            g.DrawString($"Timestamp: {DateTime.Now:HH:mm:ss.fff}", fontSub, Brushes.Cyan, 40, 105);
-            g.DrawString("Zero-Allocation Fragmenter -> UDP Socket -> FrameReassembler", fontSub, Brushes.LightGreen, 40, 145);
+            catch (OperationCanceledException) { break; }
+            catch { }
         }
+    }
 
-        using var ms = new MemoryStream();
-        var encoder = ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);
-        var encParams = new EncoderParameters(1);
-        encParams.Param[0] = new EncoderParameter(Encoder.Quality, 85L); // 85% quality for ~70KB JPEG
-        bmp.Save(ms, encoder, encParams);
-        return ms.ToArray();
+    private void RefreshStats()
+    {
+        double mbSent = _sender.TotalBytesSent / 1_048_576.0;
+        bool streaming = _streamCts != null;
+        _lblStats.Text =
+            $"Status: {(streaming ? "🔴 Streaming" : "⏸ Idle")}  |  " +
+            $"Packets sent: {_sender.TotalPacketsSent:N0}  |  " +
+            $"Data sent: {mbSent:F2} MB  |  " +
+            $"Quality: {_capturer.JpegQuality}%  |  " +
+            $"TCP: {(_tcpServer.IsClientConnected ? "Client connected" : $"Listening on :{_numTcpPort.Value}")}";
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        _streamCts?.Cancel();
+        _statsTimer.Stop();
+        StopStreaming();
+        _tcpServer.Dispose();
         _sender.Dispose();
         base.OnFormClosing(e);
     }
