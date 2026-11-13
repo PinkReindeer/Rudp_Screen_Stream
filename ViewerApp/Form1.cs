@@ -1,3 +1,4 @@
+using Engine.Telemetry;
 using Engine.Transport;
 
 namespace ViewerApp;
@@ -6,6 +7,7 @@ public partial class Form1 : Form
 {
     private readonly UdpFrameReceiver _receiver;
     private readonly TcpControlClient _tcpClient = new();
+    private readonly NetworkMetrics _metrics = new();
 
     private readonly VideoCanvas _canvas = new() { Dock = DockStyle.Fill };
 
@@ -16,8 +18,13 @@ public partial class Form1 : Form
     private readonly Button _btnDisconnect = new() { Text = "❌ Disconnect", AutoSize = true, BackColor = Color.LightCoral, Enabled = false, Margin = new Padding(2, 3, 4, 3) };
     private readonly Button _btnStart = new() { Text = "▶ Start", AutoSize = true, BackColor = Color.LightGreen, Enabled = false, Margin = new Padding(2, 3, 2, 3) };
     private readonly Button _btnStop = new() { Text = "■ Stop", AutoSize = true, BackColor = Color.Salmon, Enabled = false, Margin = new Padding(2, 3, 4, 3) };
-    private readonly TrackBar _trkQuality = new() { Minimum = 10, Maximum = 100, Value = 85, Width = 110, TickFrequency = 10, Enabled = false, Margin = new Padding(0, 2, 0, 2) };
+    private readonly TrackBar _trkQuality = new() { Minimum = 10, Maximum = 100, Value = 85, Width = 85, TickFrequency = 10, Enabled = false, Margin = new Padding(0, 2, 0, 2) };
     private readonly Label _lblQuality = new() { AutoSize = true, Text = "85%", ForeColor = Color.WhiteSmoke, Padding = new Padding(0, 6, 0, 0), Margin = new Padding(0, 2, 4, 2) };
+
+    private readonly TrackBar _trkDropRate = new() { Minimum = 0, Maximum = 50, Value = 0, Width = 85, TickFrequency = 10, Margin = new Padding(0, 2, 0, 2) };
+    private readonly Label _lblDropRate = new() { AutoSize = true, Text = "Drop: 0%", ForeColor = Color.Orange, Padding = new Padding(0, 6, 0, 0), Margin = new Padding(0, 2, 4, 2) };
+    private readonly CheckBox _chkRudp = new() { Text = "RUDP (NACK)", Checked = true, AutoSize = true, ForeColor = Color.LimeGreen, Padding = new Padding(0, 4, 0, 0), Margin = new Padding(2, 2, 4, 2) };
+
     private readonly Label _lblTcpStatus = new() { AutoSize = true, Text = "Disconnected", ForeColor = Color.OrangeRed, Padding = new Padding(2, 6, 0, 0), Margin = new Padding(0, 2, 2, 2) };
 
     private readonly Label _lblTelemetry = new()
@@ -40,8 +47,8 @@ public partial class Form1 : Form
     {
         InitializeComponent();
         Text = "RUDP Viewer App";
-        Size = new Size(1060, 680);
-        MinimumSize = new Size(540, 380);
+        Size = new Size(1160, 680);
+        MinimumSize = new Size(600, 400);
 
         BuildUi();
 
@@ -78,6 +85,10 @@ public partial class Form1 : Form
             Separator(),
             Label("Quality:", Color.Silver), _trkQuality, _lblQuality,
             Separator(),
+            Label("Chaos Proxy:", Color.Khaki), _trkDropRate, _lblDropRate,
+            Separator(),
+            _chkRudp,
+            Separator(),
             _lblTcpStatus
         ]);
 
@@ -99,6 +110,18 @@ public partial class Form1 : Form
             _lblQuality.Text = $"{_trkQuality.Value}%";
             if (_tcpClient.IsConnected)
                 _ = _tcpClient.SendSetQualityAsync((byte)_trkQuality.Value);
+        };
+
+        _trkDropRate.ValueChanged += (_, _) =>
+        {
+            _lblDropRate.Text = $"Drop: {_trkDropRate.Value}%";
+            _receiver.Chaos.DropRatePercent = _trkDropRate.Value;
+        };
+
+        _chkRudp.CheckedChanged += (_, _) =>
+        {
+            _receiver.NackEnabled = _chkRudp.Checked;
+            _chkRudp.ForeColor = _chkRudp.Checked ? Color.LimeGreen : Color.OrangeRed;
         };
 
         _btnConnect.Click += async (_, _) =>
@@ -214,7 +237,9 @@ public partial class Form1 : Form
 
                     _lastFrameId = frame.FrameID;
                     _lastFrameBytes = frame.Length;
-                    _lastLatencyMs = (uint)Environment.TickCount64 - frame.TimestampMs;
+                    _lastLatencyMs = (uint)Math.Max(0, Environment.TickCount64 - frame.TimestampMs);
+
+                    _metrics.OnFrameProcessed(frame.Length, _lastLatencyMs);
 
                     _canvas.UpdateFrame(bmp);
                     Invoke(() => _lblTelemetry.ForeColor = Color.LimeGreen);
@@ -226,13 +251,19 @@ public partial class Form1 : Form
 
     private void RefreshTelemetry()
     {
+        _metrics.Tick();
         var r = _receiver.Reassembler;
+        var chaos = _receiver.Chaos;
+        var nack = _receiver.Nack;
+
         _lblTelemetry.Text =
             $"Frame #{_lastFrameId} ({_lastFrameBytes / 1024.0:F1} KB)  |  " +
-            $"Frags recv: {r.TotalFragmentsReceived}  |  " +
-            $"Frames OK: {r.TotalFramesCompleted}  |  " +
+            $"{_metrics.CurrentFps:F1} FPS ({_metrics.CurrentBitrateMbps:F2} Mbps)  |  " +
+            $"OK: {r.TotalFramesCompleted}  |  " +
             $"Dropped: {r.TotalFramesDroppedIncomplete}  |  " +
-            $"Latency: {_lastLatencyMs} ms  |  " +
+            $"Chaos: {chaos.DropRatePercent}% ({chaos.TotalDropped} pkts)  |  " +
+            $"NACK: {(_receiver.NackEnabled ? $"{nack.TotalNacksSent} sent" : "OFF")}  |  " +
+            $"Lat: {_lastLatencyMs} ms  |  " +
             $"TCP: {(_tcpClient.IsConnected ? "✓" : "✗")}";
     }
 

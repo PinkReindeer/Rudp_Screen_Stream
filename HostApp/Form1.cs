@@ -13,10 +13,10 @@ public partial class Form1 : Form
     private CancellationTokenSource? _streamCts;
     private IPEndPoint? _connectedClientEndpoint;
 
-    private readonly TextBox _txtViewerIp = new() { Text = "127.0.0.1", Width = 115 };
-    private readonly NumericUpDown _numUdpPort = new() { Minimum = 1000, Maximum = 65535, Value = 9000, Width = 75 };
-    private readonly NumericUpDown _numTcpPort = new() { Minimum = 1000, Maximum = 65535, Value = 9001, Width = 75 };
-    private readonly TrackBar _trkQuality = new() { Minimum = 10, Maximum = 100, Value = 85, Width = 180, TickFrequency = 10 };
+    private readonly TextBox _txtViewerIp = new() { Text = "127.0.0.1", Width = 110 };
+    private readonly NumericUpDown _numUdpPort = new() { Minimum = 1000, Maximum = 65535, Value = 9000, Width = 70 };
+    private readonly NumericUpDown _numTcpPort = new() { Minimum = 1000, Maximum = 65535, Value = 9001, Width = 70 };
+    private readonly TrackBar _trkQuality = new() { Minimum = 10, Maximum = 100, Value = 85, Width = 160, TickFrequency = 10 };
     private readonly Label _lblQuality = new() { AutoSize = true, Text = "JPEG Quality: 85%" };
     private readonly Button _btnStartStream = new() { Text = "▶ Start Stream", AutoSize = true, BackColor = Color.LightGreen };
     private readonly Button _btnStopStream = new() { Text = "■ Stop Stream", AutoSize = true, BackColor = Color.Salmon, Enabled = false };
@@ -32,13 +32,13 @@ public partial class Form1 : Form
         TextAlign = ContentAlignment.MiddleLeft,
         Padding = new Padding(8, 0, 0, 0)
     };
-    private readonly System.Windows.Forms.Timer _statsTimer = new() { Interval = 500 };
+    private readonly System.Windows.Forms.Timer _statsTimer = new() { Interval = 400 };
 
     public Form1()
     {
         InitializeComponent();
         Text = "RUDP Host App";
-        Size = new Size(720, 280);
+        Size = new Size(760, 280);
         MinimumSize = Size;
 
         BuildUi();
@@ -200,10 +200,11 @@ public partial class Form1 : Form
         bool streaming = _streamCts != null;
         _lblStats.Text =
             $"Status: {(streaming ? "🔴 Streaming" : "⏸ Idle")}  |  " +
-            $"Packets sent: {_sender.TotalPacketsSent:N0}  |  " +
-            $"Data sent: {mbSent:F2} MB  |  " +
+            $"Sent: {_sender.TotalPacketsSent:N0} pkts ({mbSent:F2} MB)  |  " +
+            $"NACK recv: {_sender.TotalNacksReceived:N0}  |  " +
+            $"Retransmit: {_sender.TotalRetransmittedPackets:N0}  |  " +
             $"Quality: {_capturer.JpegQuality}%  |  " +
-            $"TCP: {(_tcpServer.IsClientConnected ? "Client connected" : $"Listening on :{_numTcpPort.Value}")}";
+            $"TCP: {(_tcpServer.IsClientConnected ? "Connected" : $":{_numTcpPort.Value}")}";
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
