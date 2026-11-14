@@ -31,6 +31,35 @@ public readonly struct CompletedFrame : IDisposable
 
 public sealed class FrameReassembler : IDisposable
 {
+    private sealed class FrameSlot
+    {
+        public uint FrameID;
+        public ushort TotalFragments;
+        public ushort ReceivedCount;
+        public int AccumulatedLength;
+        public uint TimestampMs;
+        public byte[]? Buffer;
+        public bool[] ReceivedFlags = new bool[512];
+        public bool IsComplete;
+
+        public void Reset()
+        {
+            if (Buffer != null)
+            {
+                ArrayPool<byte>.Shared.Return(Buffer);
+                Buffer = null;
+            }
+            FrameID = 0;
+            TotalFragments = 0;
+            ReceivedCount = 0;
+            AccumulatedLength = 0;
+            TimestampMs = 0;
+            IsComplete = false;
+            Array.Clear(ReceivedFlags, 0, ReceivedFlags.Length);
+        }
+    }
+
+    // Single-slot fields (Legacy / RingBuffer disabled mode)
     private uint _currentFrameID;
     private ushort _totalFragments;
     private ushort _receivedCount;
@@ -38,9 +67,24 @@ public sealed class FrameReassembler : IDisposable
     private byte[]? _frameBuffer;
     private bool[] _receivedFlags = new bool[1024];
 
+    // Multi-slot RingBuffer fields
+    private const int RingBufferSize = 32;
+    private const int RingBufferMask = RingBufferSize - 1;
+    private readonly FrameSlot[] _slots = new FrameSlot[RingBufferSize];
+
+    public bool EnableRingBuffer { get; set; } = false;
+
     public long TotalFragmentsReceived { get; private set; }
     public long TotalFramesCompleted { get; private set; }
     public long TotalFramesDroppedIncomplete { get; private set; }
+
+    public FrameReassembler()
+    {
+        for (int i = 0; i < RingBufferSize; i++)
+        {
+            _slots[i] = new FrameSlot();
+        }
+    }
 
     public bool TryPushPacket(ReadOnlySpan<byte> rawPacket, out CompletedFrame completedFrame)
     {
@@ -53,6 +97,20 @@ public sealed class FrameReassembler : IDisposable
         if (header.FragmentID >= header.TotalFragments || header.TotalFragments == 0) return false;
 
         TotalFragmentsReceived++;
+
+        if (EnableRingBuffer)
+        {
+            return PushWithRingBuffer(header, rawPacket, out completedFrame);
+        }
+        else
+        {
+            return PushSingleSlot(header, rawPacket, out completedFrame);
+        }
+    }
+
+    private bool PushSingleSlot(in RudpHeader header, ReadOnlySpan<byte> rawPacket, out CompletedFrame completedFrame)
+    {
+        completedFrame = default;
 
         // Discard fragments belonging to the previous frame if we have already moved on to a new frame
         if (header.FrameID < _currentFrameID && _currentFrameID != 0)
@@ -92,19 +150,80 @@ public sealed class FrameReassembler : IDisposable
         int destOffset = header.FragmentID * RudpHeader.MaxPayloadSize;
         rawPacket.Slice(RudpHeader.Size, header.PayloadLength).CopyTo(_frameBuffer.AsSpan(destOffset, header.PayloadLength));
 
-        // Calculate the accumulated length when the last fragment is received
         int endPos = destOffset + header.PayloadLength;
         if (endPos > _accumulatedLength)
         {
             _accumulatedLength = endPos;
         }
 
-        // Check if all fragments have been received
         if (_receivedCount == _totalFragments)
         {
             TotalFramesCompleted++;
             completedFrame = new CompletedFrame(_currentFrameID, _frameBuffer, _accumulatedLength, header.TimestampMs);
             _frameBuffer = null; // Transfer ownership to CompletedFrame
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool PushWithRingBuffer(in RudpHeader header, ReadOnlySpan<byte> rawPacket, out CompletedFrame completedFrame)
+    {
+        completedFrame = default;
+
+        int slotIdx = (int)(header.FrameID & RingBufferMask);
+        var slot = _slots[slotIdx];
+
+        // If slot has a different frame ID
+        if (slot.FrameID != header.FrameID)
+        {
+            if (slot.Buffer != null && !slot.IsComplete && slot.ReceivedCount < slot.TotalFragments)
+            {
+                TotalFramesDroppedIncomplete++;
+            }
+
+            slot.Reset();
+            slot.FrameID = header.FrameID;
+            slot.TotalFragments = header.TotalFragments;
+            slot.TimestampMs = header.TimestampMs;
+
+            int maxPossibleBytes = slot.TotalFragments * RudpHeader.MaxPayloadSize;
+            slot.Buffer = ArrayPool<byte>.Shared.Rent(maxPossibleBytes);
+
+            if (slot.ReceivedFlags.Length < slot.TotalFragments)
+                slot.ReceivedFlags = new bool[slot.TotalFragments * 2];
+            else
+                Array.Clear(slot.ReceivedFlags, 0, slot.TotalFragments);
+        }
+
+        if (slot.IsComplete || slot.Buffer == null)
+        {
+            return false;
+        }
+
+        if (slot.ReceivedFlags[header.FragmentID])
+        {
+            return false;
+        }
+
+        slot.ReceivedFlags[header.FragmentID] = true;
+        slot.ReceivedCount++;
+
+        int destOffset = header.FragmentID * RudpHeader.MaxPayloadSize;
+        rawPacket.Slice(RudpHeader.Size, header.PayloadLength).CopyTo(slot.Buffer.AsSpan(destOffset, header.PayloadLength));
+
+        int endPos = destOffset + header.PayloadLength;
+        if (endPos > slot.AccumulatedLength)
+        {
+            slot.AccumulatedLength = endPos;
+        }
+
+        if (slot.ReceivedCount == slot.TotalFragments)
+        {
+            slot.IsComplete = true;
+            TotalFramesCompleted++;
+            completedFrame = new CompletedFrame(slot.FrameID, slot.Buffer, slot.AccumulatedLength, slot.TimestampMs);
+            slot.Buffer = null; // Transfer ownership to CompletedFrame
             return true;
         }
 
@@ -117,6 +236,11 @@ public sealed class FrameReassembler : IDisposable
         {
             ArrayPool<byte>.Shared.Return(_frameBuffer);
             _frameBuffer = null;
+        }
+
+        for (int i = 0; i < RingBufferSize; i++)
+        {
+            _slots[i].Reset();
         }
     }
 }

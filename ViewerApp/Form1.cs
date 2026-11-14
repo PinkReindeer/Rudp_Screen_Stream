@@ -9,16 +9,22 @@ public partial class Form1 : Form
 
     private readonly VideoCanvas _canvas = new() { Dock = DockStyle.Fill };
 
-    private readonly TextBox       _txtHostIp      = new() { Text = "127.0.0.1", Width = 95, Margin = new Padding(2, 4, 4, 2) };
-    private readonly NumericUpDown _numUdpPort      = new() { Minimum = 1000, Maximum = 65535, Value = 9000, Width = 62, Margin = new Padding(2, 4, 4, 2) };
-    private readonly NumericUpDown _numTcpPort      = new() { Minimum = 1000, Maximum = 65535, Value = 9001, Width = 62, Margin = new Padding(2, 4, 4, 2) };
-    private readonly Button        _btnConnect      = new() { Text = "🔌 Connect",      AutoSize = true, BackColor = Color.SkyBlue, Margin = new Padding(2, 3, 2, 3) };
-    private readonly Button        _btnDisconnect   = new() { Text = "❌ Disconnect",   AutoSize = true, BackColor = Color.LightCoral, Enabled = false, Margin = new Padding(2, 3, 4, 3) };
-    private readonly Button        _btnStart        = new() { Text = "▶ Start",         AutoSize = true, BackColor = Color.LightGreen, Enabled = false, Margin = new Padding(2, 3, 2, 3) };
-    private readonly Button        _btnStop         = new() { Text = "■ Stop",          AutoSize = true, BackColor = Color.Salmon, Enabled = false, Margin = new Padding(2, 3, 4, 3) };
-    private readonly TrackBar      _trkQuality      = new() { Minimum = 10, Maximum = 100, Value = 85, Width = 110, TickFrequency = 10, Enabled = false, Margin = new Padding(0, 2, 0, 2) };
-    private readonly Label         _lblQuality      = new() { AutoSize = true, Text = "85%", ForeColor = Color.WhiteSmoke, Padding = new Padding(0, 6, 0, 0), Margin = new Padding(0, 2, 4, 2) };
-    private readonly Label         _lblTcpStatus    = new() { AutoSize = true, Text = "Disconnected", ForeColor = Color.OrangeRed, Padding = new Padding(2, 6, 0, 0), Margin = new Padding(0, 2, 2, 2) };
+    private readonly TextBox _txtHostIp = new() { Text = "127.0.0.1", Width = 95, Margin = new Padding(2, 4, 4, 2) };
+    private readonly NumericUpDown _numUdpPort = new() { Minimum = 1000, Maximum = 65535, Value = 9000, Width = 62, Margin = new Padding(2, 4, 4, 2) };
+    private readonly NumericUpDown _numTcpPort = new() { Minimum = 1000, Maximum = 65535, Value = 9001, Width = 62, Margin = new Padding(2, 4, 4, 2) };
+    private readonly Button _btnConnect = new() { Text = "Connect", AutoSize = true, BackColor = Color.SkyBlue, Margin = new Padding(2, 3, 2, 3) };
+    private readonly Button _btnDisconnect = new() { Text = "Disconnect", AutoSize = true, BackColor = Color.LightCoral, Enabled = false, Margin = new Padding(2, 3, 4, 3) };
+    private readonly Button _btnStart = new() { Text = "▶ Start", AutoSize = true, BackColor = Color.LightGreen, Enabled = false, Margin = new Padding(2, 3, 2, 3) };
+    private readonly Button _btnStop = new() { Text = "■ Stop", AutoSize = true, BackColor = Color.Salmon, Enabled = false, Margin = new Padding(2, 3, 4, 3) };
+    private readonly TrackBar _trkQuality = new() { Minimum = 10, Maximum = 100, Value = 85, Width = 90, TickFrequency = 10, Enabled = false, Margin = new Padding(0, 2, 0, 2) };
+    private readonly Label _lblQuality = new() { AutoSize = true, Text = "85%", ForeColor = Color.WhiteSmoke, Padding = new Padding(0, 6, 0, 0), Margin = new Padding(0, 2, 4, 2) };
+    private readonly Label _lblTcpStatus = new() { AutoSize = true, Text = "Disconnected", ForeColor = Color.OrangeRed, Padding = new Padding(2, 6, 0, 0), Margin = new Padding(0, 2, 2, 2) };
+
+    // Chaos Proxy & NACK / RingBuffer controls
+    private readonly TrackBar _trkDropRate = new() { Minimum = 0, Maximum = 100, Value = 0, SmallChange = 1, LargeChange = 5, TickFrequency = 10, Width = 100, Margin = new Padding(0, 2, 0, 2) };
+    private readonly Label _lblDropRate = new() { AutoSize = true, Text = "0%", ForeColor = Color.WhiteSmoke, Padding = new Padding(0, 6, 0, 0), Margin = new Padding(0, 2, 4, 2) };
+    private readonly CheckBox _chkRingBuffer = new() { Text = "RingBuffer", AutoSize = true, ForeColor = Color.FromArgb(240, 210, 100), Font = new Font("Segoe UI", 9, FontStyle.Bold), Padding = new Padding(0, 4, 0, 0), Margin = new Padding(4, 2, 4, 2), Cursor = Cursors.Hand };
+    private readonly CheckBox _chkNack = new() { Text = "NACK", AutoSize = true, ForeColor = Color.FromArgb(100, 200, 255), Font = new Font("Segoe UI", 9, FontStyle.Bold), Padding = new Padding(0, 4, 0, 0), Margin = new Padding(4, 2, 4, 2), Cursor = Cursors.Hand };
 
     private readonly Label _lblTelemetry = new()
     {
@@ -39,9 +45,9 @@ public partial class Form1 : Form
     public Form1()
     {
         InitializeComponent();
-        Text = "RUDP Viewer App";
-        Size = new Size(1060, 680);
-        MinimumSize = new Size(540, 380);
+        Text = "RUDP Viewer App (with Chaos Proxy & NACK Retransmission)";
+        Size = new Size(1200, 700);
+        MinimumSize = new Size(600, 400);
 
         BuildUi();
 
@@ -78,6 +84,11 @@ public partial class Form1 : Form
             Separator(),
             Label("Quality:", Color.Silver), _trkQuality, _lblQuality,
             Separator(),
+            Label("Drop Rate:", Color.Orange), _trkDropRate, _lblDropRate,
+            Separator(),
+            _chkRingBuffer,
+            _chkNack,
+            Separator(),
             _lblTcpStatus
         ]);
 
@@ -109,6 +120,24 @@ public partial class Form1 : Form
             _lblQuality.Text = $"{_trkQuality.Value}%";
             if (_tcpClient.IsConnected)
                 _ = _tcpClient.SendSetQualityAsync((byte)_trkQuality.Value);
+        };
+
+        _trkDropRate.ValueChanged += (_, _) =>
+        {
+            int rate = _trkDropRate.Value;
+            _lblDropRate.Text = $"{rate}%";
+            _receiver.Chaos.DropRatePercent = rate;
+            _lblDropRate.ForeColor = rate > 0 ? Color.Salmon : Color.WhiteSmoke;
+        };
+
+        _chkRingBuffer.CheckedChanged += (_, _) =>
+        {
+            _receiver.EnableRingBuffer = _chkRingBuffer.Checked;
+        };
+
+        _chkNack.CheckedChanged += (_, _) =>
+        {
+            _receiver.EnableNack = _chkNack.Checked;
         };
 
         _btnConnect.Click += async (_, _) =>
@@ -238,12 +267,19 @@ public partial class Form1 : Form
 
     private void RefreshTelemetry()
     {
+        _receiver.Metrics.UpdateSnapshot();
         var r = _receiver.Reassembler;
+        var chaos = _receiver.Chaos;
+        var nack = _receiver.NackTracker;
+        var m = _receiver.Metrics;
+
         _lblTelemetry.Text =
+            $"FPS: {m.CurrentFps:F1} ({m.CurrentBitrateMbps:F2} Mbps)  |  " +
             $"Frame #{_lastFrameId} ({_lastFrameBytes / 1024.0:F1} KB)  |  " +
-            $"Frags recv: {r.TotalFragmentsReceived}  |  " +
-            $"Frames OK: {r.TotalFramesCompleted}  |  " +
             $"Dropped: {r.TotalFramesDroppedIncomplete}  |  " +
+            $"Chaos Drop: {chaos.DropRatePercent}% ({chaos.TotalPacketsDropped} pkts)  |  " +
+            $"NACK: {(nack.IsEnabled ? "ON" : "OFF")} (Sent: {nack.TotalNacksSent}, Recv: {nack.TotalRecovered})  |  " +
+            $"RingBuffer: {(r.EnableRingBuffer ? "ON" : "OFF")}  |  " +
             $"Latency: {_lastLatencyMs} ms  |  " +
             $"TCP: {(_tcpClient.IsConnected ? "✓" : "✗")}";
     }

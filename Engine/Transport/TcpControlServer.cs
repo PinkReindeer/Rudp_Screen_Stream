@@ -143,7 +143,8 @@ public sealed class TcpControlServer : IDisposable
                 // 4. UDP Probe check
                 if (UdpProbeSender != null)
                 {
-                    var viewerUdpEp = new IPEndPoint(remoteEp.Address, viewerUdpPort);
+                    var clientIp = remoteEp.Address.IsIPv4MappedToIPv6 ? remoteEp.Address.MapToIPv4() : remoteEp.Address;
+                    var viewerUdpEp = new IPEndPoint(clientIp, viewerUdpPort);
                     await UdpProbeSender(viewerUdpEp);
 
                     using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -152,7 +153,8 @@ public sealed class TcpControlServer : IDisposable
                     var probeResp = await ControlProtocol.ReadMessageAsync(stream, probeCts.Token);
                     if (probeResp == null || probeResp.Value.Type != (byte)ControlCommandType.UdpProbeAck)
                     {
-                        await SendResponseAsync(ControlProtocol.RespAckError($"UDP check failed: UDP probe packet not received on port {viewerUdpPort}"), ct);
+                        await SendResponseAsync(ControlProtocol.RespAckError(
+                            $"UDP check failed: UDP probe packet not received on port {viewerUdpPort}"), ct);
                         return;
                     }
                 }

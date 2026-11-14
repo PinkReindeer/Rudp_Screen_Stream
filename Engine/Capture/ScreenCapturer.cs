@@ -3,7 +3,6 @@ using System.Drawing.Imaging;
 
 namespace Engine.Capture;
 
-
 public sealed class ScreenCapturer
 {
     private static readonly ImageCodecInfo JpegCodec =
@@ -24,8 +23,7 @@ public sealed class ScreenCapturer
         using var bmp = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppArgb);
         using (var g = Graphics.FromImage(bmp))
         {
-            g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size,
-                             CopyPixelOperation.SourceCopy);
+            g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size, CopyPixelOperation.SourceCopy);
         }
 
         var ms = new MemoryStream(bounds.Width * bounds.Height / 4);

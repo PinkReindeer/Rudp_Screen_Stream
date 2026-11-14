@@ -16,10 +16,8 @@ public sealed class TcpControlClient : IDisposable
 
     public bool IsConnected { get; private set; }
 
-    // ── Connect ───────────────────────────────────────────────────────────────
-
-    public async Task ConnectAsync(string host, int tcpPort, ushort myUdpPort,
-                                   CancellationToken ct = default)
+    // Connect
+    public async Task ConnectAsync(string host, int tcpPort, ushort myUdpPort, CancellationToken ct = default)
     {
         Disconnect();
 
@@ -85,17 +83,13 @@ public sealed class TcpControlClient : IDisposable
         _ = Task.Run(() => ReadLoopAsync(_cts.Token));
     }
 
-    public Task SendUdpProbeAckAsync(CancellationToken ct = default) =>
-        SendAsync(ControlProtocol.CmdUdpProbeAck(), ct);
+    public Task SendUdpProbeAckAsync(CancellationToken ct = default) => SendAsync(ControlProtocol.CmdUdpProbeAck(), ct);
 
-    public Task SendStartStreamAsync(CancellationToken ct = default) =>
-        SendAsync(ControlProtocol.CmdStart(), ct);
+    public Task SendStartStreamAsync(CancellationToken ct = default) => SendAsync(ControlProtocol.CmdStart(), ct);
 
-    public Task SendStopStreamAsync(CancellationToken ct = default) =>
-        SendAsync(ControlProtocol.CmdStop(), ct);
+    public Task SendStopStreamAsync(CancellationToken ct = default) => SendAsync(ControlProtocol.CmdStop(), ct);
 
-    public Task SendSetQualityAsync(byte quality, CancellationToken ct = default) =>
-        SendAsync(ControlProtocol.CmdQuality(quality), ct);
+    public Task SendSetQualityAsync(byte quality, CancellationToken ct = default) => SendAsync(ControlProtocol.CmdQuality(quality), ct);
 
     public async Task DisconnectAsync(CancellationToken ct = default)
     {
@@ -150,10 +144,8 @@ public sealed class TcpControlClient : IDisposable
 
                 string text = msg.Value.Type switch
                 {
-                    (byte)ControlResponseType.Ack =>
-                        ControlProtocol.ParseAck(msg.Value.Payload).Message,
-                    (byte)ControlResponseType.Info =>
-                        System.Text.Encoding.UTF8.GetString(msg.Value.Payload),
+                    (byte)ControlResponseType.Ack => ControlProtocol.ParseAck(msg.Value.Payload).Message,
+                    (byte)ControlResponseType.Info => System.Text.Encoding.UTF8.GetString(msg.Value.Payload),
                     _ => $"Unknown response 0x{msg.Value.Type:X2}"
                 };
 

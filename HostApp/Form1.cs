@@ -14,6 +14,7 @@ public partial class Form1 : Form
 
     // ── Streaming state ────────────────────────────────────────────────────────
     private CancellationTokenSource? _streamCts;
+    private IPEndPoint? _connectedClientEndpoint;
 
     // ── UI controls ────────────────────────────────────────────────────────────
     private readonly TextBox       _txtViewerIp         = new() { Text = "127.0.0.1", Width = 115 };
@@ -70,20 +71,23 @@ public partial class Form1 : Form
             return (false, $"Host configuration error: Invalid Viewer IP '{configuredIpStr}'");
         }
 
-        // EXACT IP comparison (normalizing IPv4-mapped IPv6)
+        // IP comparison (normalizing IPv4-mapped IPv6 and loopbacks)
         IPAddress normConfigured = configuredIp.IsIPv4MappedToIPv6 ? configuredIp.MapToIPv4() : configuredIp;
         IPAddress normClient     = clientIp.IsIPv4MappedToIPv6 ? clientIp.MapToIPv4() : clientIp;
 
-        if (!normConfigured.Equals(normClient))
+        bool isLoopbackMatch = IPAddress.IsLoopback(normConfigured) && IPAddress.IsLoopback(normClient);
+        bool isAny = normConfigured.Equals(IPAddress.Any) || normConfigured.Equals(IPAddress.IPv6Any);
+
+        if (!isAny && !isLoopbackMatch && !normConfigured.Equals(normClient))
         {
             return (false, $"Viewer IP mismatch: Host expects Viewer IP '{normConfigured}', but connection arrived from '{normClient}'!");
         }
 
-        // 3. Validate UDP Port
+        // 3. Adapt UDP port if different
         ushort expectedUdpPort = (ushort)_numUdpPort.Value;
         if (clientUdpPort != expectedUdpPort)
         {
-            return (false, $"UDP Port mismatch: Host configured UDP Port is {expectedUdpPort}, but Viewer is on {clientUdpPort}!");
+            Invoke(() => _numUdpPort.Value = clientUdpPort);
         }
 
         return (true, string.Empty);
@@ -158,7 +162,12 @@ public partial class Form1 : Form
         // TCP server events (may arrive on thread-pool thread → Invoke to UI)
         _tcpServer.ClientConnected += (remoteEp, viewerUdpPort) => Invoke(() =>
         {
-            _lblClientStatus.Text = $"● Viewer connected ({remoteEp.Address}:{viewerUdpPort})";
+            var normClient = remoteEp.Address.IsIPv4MappedToIPv6 ? remoteEp.Address.MapToIPv4() : remoteEp.Address;
+            _connectedClientEndpoint = new IPEndPoint(normClient, viewerUdpPort);
+
+            _txtViewerIp.Text = normClient.ToString();
+            _numUdpPort.Value = viewerUdpPort;
+            _lblClientStatus.Text = $"● Viewer connected ({normClient}:{viewerUdpPort})";
             _lblClientStatus.ForeColor = Color.LimeGreen;
 
             // Lock endpoint parameters while connected
@@ -170,6 +179,7 @@ public partial class Form1 : Form
 
         _tcpServer.ClientDisconnected += () => Invoke(() =>
         {
+            _connectedClientEndpoint = null;
             _lblClientStatus.Text      = "● No client connected";
             _lblClientStatus.ForeColor = Color.OrangeRed;
 
@@ -203,17 +213,25 @@ public partial class Form1 : Form
     {
         if (_streamCts != null) return;   // Already running
 
-        if (!IPAddress.TryParse(_txtViewerIp.Text.Trim(), out var targetIp))
+        IPEndPoint endpoint;
+        if (_connectedClientEndpoint != null)
         {
-            MessageBox.Show($"Invalid Viewer IP '{_txtViewerIp.Text}'", "Streaming Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            return;
+            endpoint = _connectedClientEndpoint;
+        }
+        else
+        {
+            if (!IPAddress.TryParse(_txtViewerIp.Text.Trim(), out var targetIp))
+            {
+                MessageBox.Show($"Invalid Viewer IP '{_txtViewerIp.Text}'", "Streaming Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            var normTarget = targetIp.IsIPv4MappedToIPv6 ? targetIp.MapToIPv4() : targetIp;
+            endpoint = new IPEndPoint(normTarget, (int)_numUdpPort.Value);
         }
 
         _streamCts = new CancellationTokenSource();
         _btnStartStream.Enabled = false;
         _btnStopStream.Enabled  = true;
-
-        var endpoint = new IPEndPoint(targetIp, (int)_numUdpPort.Value);
 
         var token = _streamCts.Token;
         _ = Task.Run(() => StreamLoopAsync(endpoint, token), token);
@@ -256,6 +274,8 @@ public partial class Form1 : Form
         _lblStats.Text =
             $"Status: {(streaming ? "🔴 Streaming" : "⏸ Idle")}  |  " +
             $"Packets sent: {_sender.TotalPacketsSent:N0}  |  " +
+            $"NACKs recv: {_sender.TotalNacksReceived:N0}  |  " +
+            $"Retransmitted: {_sender.TotalPacketsRetransmitted:N0}  |  " +
             $"Data sent: {mbSent:F2} MB  |  " +
             $"Quality: {_capturer.JpegQuality}%  |  " +
             $"TCP: {(_tcpServer.IsClientConnected ? "Client connected" : $"Listening on :{_numTcpPort.Value}")}";
