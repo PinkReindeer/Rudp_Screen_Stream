@@ -16,6 +16,7 @@ public sealed class TcpControlServer : IDisposable
     public event Action? StartStreamRequested;
     public event Action? StopStreamRequested;
     public event Action<int>? QualityChangeRequested;
+    public event Action<byte>? SwitchModeRequested;
 
     public bool IsClientConnected { get; private set; }
     public int CurrentPort { get; private set; }
@@ -146,6 +147,14 @@ public sealed class TcpControlServer : IDisposable
                     int quality = Math.Clamp((int)payload[0], 1, 100);
                     QualityChangeRequested?.Invoke(quality);
                     await SendResponseAsync(ControlProtocol.RespInfo($"Quality={quality}"), ct);
+                }
+                break;
+
+            case ControlCommandType.SwitchMode:
+                if (payload.Length >= 1)
+                {
+                    SwitchModeRequested?.Invoke(payload[0]);
+                    await SendResponseAsync(ControlProtocol.RespAckOk(), ct);
                 }
                 break;
 

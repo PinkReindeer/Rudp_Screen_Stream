@@ -88,6 +88,9 @@ public sealed class TcpControlClient : IDisposable
     public Task SendSetQualityAsync(byte quality, CancellationToken ct = default) =>
         SendAsync(ControlProtocol.CmdQuality(quality), ct);
 
+    public Task SendSwitchModeAsync(byte mode, CancellationToken ct = default) =>
+        SendAsync(ControlProtocol.CmdSwitchMode(mode), ct);
+
     public async Task DisconnectAsync(CancellationToken ct = default)
     {
         if (!IsConnected) return;

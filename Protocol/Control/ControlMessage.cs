@@ -9,7 +9,8 @@ public enum ControlCommandType : byte
     StartStream = 0x02,
     StopStream  = 0x03,
     SetQuality  = 0x04,
-    Disconnect  = 0x05
+    Disconnect  = 0x05,
+    SwitchMode  = 0x06
 }
 
 public enum ControlResponseType : byte
@@ -56,6 +57,11 @@ public static class ControlProtocol
     public static byte[] CmdStop()          => BuildCommand(ControlCommandType.StopStream);
     public static byte[] CmdQuality(byte q) => BuildCommand(ControlCommandType.SetQuality, [q]);
     public static byte[] CmdDisconnect()    => BuildCommand(ControlCommandType.Disconnect);
+
+    public static byte[] CmdSwitchMode(byte mode) => BuildCommand(ControlCommandType.SwitchMode, [mode]);
+
+    public static byte ParseSwitchMode(ReadOnlySpan<byte> payload) =>
+        payload.Length >= 1 ? payload[0] : (byte)0x00;
 
     public static byte[] RespAckOk() => BuildResponse(ControlResponseType.Ack, [0x00]);
 
