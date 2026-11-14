@@ -59,10 +59,13 @@ public sealed class UdpFrameReceiver : IDisposable
 
     public void Rebind(int newPort)
     {
-        if (newPort == CurrentPort && _socket != null) return;
-        CurrentPort = newPort;
-        StopReceiving();
-        BindAndStart(newPort);
+        lock (_lock)
+        {
+            if (newPort == CurrentPort && _socket != null) return;
+            CurrentPort = newPort;
+            StopReceiving();
+            BindAndStart(newPort);
+        }
     }
 
     private void BindAndStart(int port)
@@ -84,15 +87,12 @@ public sealed class UdpFrameReceiver : IDisposable
 
     private void StopReceiving()
     {
-        lock (_socketLock)
-        {
-            _cts?.Cancel();
-            _cts?.Dispose();
-            _cts = null;
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = null;
 
-            _socket?.Dispose();
-            _socket = null;
-        }
+        _socket?.Dispose();
+        _socket = null;
     }
 
     private async Task ReceiveLoopAsync(Socket socket, CancellationToken ct)

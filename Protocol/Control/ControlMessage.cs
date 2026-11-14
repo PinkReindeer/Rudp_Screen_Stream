@@ -1,29 +1,26 @@
 using System.Buffers.Binary;
-using System.Net;
-using System.Net.Sockets;
 using System.Text;
 
 namespace Protocol.Control;
 
 public enum ControlCommandType : byte
 {
-    Connect      = 0x01,   // Payload: [2 bytes ushort viewerUdpPort LE] + [UTF-8 targetHostIp]
-    StartStream  = 0x02,   // Start sending live screen frames; no payload
-    StopStream   = 0x03,   // Stop sending frames; no payload
-    SetQuality   = 0x04,   // 1-byte payload: JPEG quality (1–100)
-    Disconnect   = 0x05,   // Client signals disconnecting; no payload
-    UdpProbeAck  = 0x06,   // Viewer confirms it received the UDP probe packet; no payload
+    Connect     = 0x01,
+    StartStream = 0x02,
+    StopStream  = 0x03,
+    SetQuality  = 0x04,
+    Disconnect  = 0x05
 }
 
 public enum ControlResponseType : byte
 {
-    Ack  = 0x80,   // Byte 0: 0x00 = OK, 0x01 = Error. Followed by optional UTF-8 error message.
-    Info = 0x81,   // UTF-8 text payload with status info
+    Ack  = 0x80,
+    Info = 0x81
 }
 
 public static class ControlProtocol
 {
-    public const int TcpControlPort = 9001;
+    public const int DefaultTcpPort = 9001;
 
     // Serialise
 
@@ -51,11 +48,8 @@ public static class ControlProtocol
 
     public static byte[] CmdConnect(ushort viewerUdpPort, string targetHostIp)
     {
-        byte[] ipBytes = Encoding.UTF8.GetBytes(targetHostIp.Trim());
-        int maxIpLen = Math.Min(ipBytes.Length, 200);
-        byte[] payload = new byte[2 + maxIpLen];
+        var payload = new byte[2];
         BinaryPrimitives.WriteUInt16LittleEndian(payload, viewerUdpPort);
-        Array.Copy(ipBytes, 0, payload, 2, maxIpLen);
         return BuildCommand(ControlCommandType.Connect, payload);
     }
 
@@ -122,8 +116,8 @@ public static class ControlProtocol
     {
         byte[] reasonBytes = Encoding.UTF8.GetBytes(reason);
         int maxLen = Math.Min(reasonBytes.Length, 250);
-        byte[] payload = new byte[1 + maxLen];
-        payload[0] = 0x01; // Error code
+        var payload = new byte[1 + maxLen];
+        payload[0] = 0x01;
         Array.Copy(reasonBytes, 0, payload, 1, maxLen);
         return BuildResponse(ControlResponseType.Ack, payload);
     }
