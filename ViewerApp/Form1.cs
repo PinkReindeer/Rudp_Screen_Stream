@@ -12,6 +12,9 @@ public partial class Form1 : Form
     private TcpStreamReceiver? _tcpStreamReceiver;
     private CancellationTokenSource? _tcpDecodeCts;
     private bool _isTcpMode;
+    private bool _isStreaming;
+    private bool _updatingQualityFromRemote;
+    private bool _updatingModeFromRemote;
 
     private static readonly Color AppBackground = Color.FromArgb(7, 11, 20);
     private static readonly Color ToolbarBg = Color.FromArgb(13, 21, 39);
@@ -64,7 +67,6 @@ public partial class Form1 : Form
 
     private readonly ModernButton _btnConnect = new()
     {
-        CustomIcon = "link",
         Text = "Connect",
         NormalColor = PrimaryBlue,
         HoverColor = Color.FromArgb(37, 133, 255),
@@ -74,7 +76,6 @@ public partial class Form1 : Form
     };
     private readonly ModernButton _btnDisconnect = new()
     {
-        CustomIcon = "✕",
         Text = "Disconnect",
         NormalColor = DangerRed,
         HoverColor = Color.FromArgb(239, 68, 68),
@@ -122,7 +123,6 @@ public partial class Form1 : Form
 
     private readonly ModernButton _btnStart = new()
     {
-        CustomIcon = "▶",
         Text = "Start",
         NormalColor = SuccessGreen,
         HoverColor = Color.FromArgb(5, 150, 105),
@@ -133,7 +133,6 @@ public partial class Form1 : Form
     };
     private readonly ModernButton _btnStop = new()
     {
-        CustomIcon = "■",
         Text = "Stop",
         NormalColor = DangerRed,
         HoverColor = Color.FromArgb(239, 68, 68),
@@ -143,15 +142,89 @@ public partial class Form1 : Form
         Enabled = false
     };
 
+    private readonly Label _lblSimLoss = new()
+    {
+        Text = "Sim Loss:",
+        AutoSize = true,
+        ForeColor = TextPrimary,
+        Font = new Font("Segoe UI", 9.5f)
+    };
+    private readonly DarkSlider _trkSimLoss = new()
+    {
+        Minimum = 0,
+        Maximum = 100,
+        Value = 0,
+        Size = new Size(85, 22),
+        TrackColor = Color.FromArgb(34, 50, 73),
+        ProgressColor = Color.FromArgb(239, 68, 68),
+        ThumbColor = Color.FromArgb(248, 113, 113)
+    };
+    private readonly Label _lblSimLossVal = new()
+    {
+        Text = "0%",
+        AutoSize = true,
+        ForeColor = Color.FromArgb(248, 113, 113),
+        Font = new Font("Segoe UI", 9.5f, FontStyle.Bold)
+    };
+
+    private readonly Label _lblSimLatency = new()
+    {
+        Text = "Sim Latency:",
+        AutoSize = true,
+        ForeColor = TextPrimary,
+        Font = new Font("Segoe UI", 9.5f)
+    };
+    private readonly DarkSlider _trkSimLatency = new()
+    {
+        Minimum = 0,
+        Maximum = 500,
+        Value = 0,
+        Size = new Size(85, 22),
+        TrackColor = Color.FromArgb(34, 50, 73),
+        ProgressColor = Color.FromArgb(234, 179, 8),
+        ThumbColor = Color.FromArgb(250, 204, 21)
+    };
+    private readonly Label _lblSimLatencyVal = new()
+    {
+        Text = "0 ms",
+        AutoSize = true,
+        ForeColor = Color.FromArgb(250, 204, 21),
+        Font = new Font("Segoe UI", 9.5f, FontStyle.Bold)
+    };
+
     private readonly ModernCheckBox _chkNack = new()
     {
-        Text = "NACK",
+        Text = "Enable NACK Retransmission",
         Checked = true,
         CheckColor = PrimaryBlue,
         ForeColor = TextPrimary,
-        Dock = DockStyle.Right,
-        Width = 80
+        Font = new Font("Segoe UI", 9.5f),
+        Size = new Size(215, 24)
     };
+
+    private readonly ModernButton _btnResetSim = new()
+    {
+        Text = "Reset",
+        NormalColor = Color.FromArgb(30, 41, 59),
+        HoverColor = Color.FromArgb(42, 58, 82),
+        PressedColor = Color.FromArgb(20, 28, 42),
+        BorderRadius = 6,
+        Font = new Font("Segoe UI", 8.5f),
+        Size = new Size(62, 24)
+    };
+
+    private readonly ModernButton _btnToggleSim = new()
+    {
+        Text = "Sim Controls",
+        NormalColor = Color.FromArgb(30, 41, 59),
+        HoverColor = Color.FromArgb(42, 58, 82),
+        PressedColor = Color.FromArgb(20, 28, 42),
+        BorderRadius = 6,
+        Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+        Size = new Size(130, 28)
+    };
+
+    private bool _simExpanded = true;
 
     private readonly Label _lblTelemetry = new()
     {
@@ -171,7 +244,7 @@ public partial class Form1 : Form
     public Form1()
     {
         InitializeComponent();
-        Text = "↔  RUDP Viewer App – Remote Session";
+        Text = "RUDP Viewer App - Remote Session";
         Size = new Size(1100, 680);
         MinimumSize = new Size(760, 500);
         StartPosition = FormStartPosition.CenterScreen;
@@ -179,7 +252,10 @@ public partial class Form1 : Form
 
         BuildUi();
 
-        _receiver = new UdpFrameReceiver(listenPort: (int)_numUdpPort.Value);
+        _receiver = new UdpFrameReceiver(listenPort: (int)_numUdpPort.Value)
+        {
+            EnableNack = _chkNack.Checked
+        };
 
         HookEvents();
 
@@ -195,11 +271,14 @@ public partial class Form1 : Form
             _lblHost, _txtHostIp, _lblUdp, _numUdpPort, _lblTcp, _numTcpPort,
             _btnConnect, _btnDisconnect,
             _lblQuality, _trkQuality, _lblQualityValue, _lblMode, _rbRudpMode, _rbTcpMode,
-            _btnStart, _btnStop
+            _btnToggleSim, _btnStart, _btnStop,
+            _lblSimLoss, _trkSimLoss, _lblSimLossVal,
+            _lblSimLatency, _trkSimLatency, _lblSimLatencyVal,
+            _chkNack, _btnResetSim
         ]);
+        _topToolbar.Height = 114;
 
         _statusBar.Controls.Add(_lblTelemetry);
-        _statusBar.Controls.Add(_chkNack);
 
         Controls.Add(_canvas);
         Controls.Add(_statusBar);
@@ -207,8 +286,38 @@ public partial class Form1 : Form
 
         _canvas.BringToFront();
 
+        _topToolbar.Paint += (_, e) =>
+        {
+            if (_simExpanded)
+            {
+                using var pen = new Pen(Color.FromArgb(28, 41, 65), 1f);
+                e.Graphics.DrawLine(pen, 16, 73, _topToolbar.ClientSize.Width - 16, 73);
+            }
+        };
+
         _topToolbar.Resize += (_, _) => UpdateToolbarLayout();
         UpdateToolbarLayout();
+    }
+
+    private void ToggleSimCluster()
+    {
+        _simExpanded = !_simExpanded;
+        _btnToggleSim.Text = "Sim Controls";
+        _topToolbar.Height = _simExpanded ? 114 : 78;
+        SetSimControlsVisibility(_simExpanded);
+        _topToolbar.Invalidate();
+    }
+
+    private void SetSimControlsVisibility(bool visible)
+    {
+        _lblSimLoss.Visible = visible;
+        _trkSimLoss.Visible = visible;
+        _lblSimLossVal.Visible = visible;
+        _lblSimLatency.Visible = visible;
+        _trkSimLatency.Visible = visible;
+        _lblSimLatencyVal.Visible = visible;
+        _chkNack.Visible = visible;
+        _btnResetSim.Visible = visible;
     }
 
     private void UpdateToolbarLayout()
@@ -240,27 +349,77 @@ public partial class Form1 : Form
         _btnDisconnect.Location = new Point(discX, 7);
 
         int row2X = pad;
-        _lblQuality.Location = new Point(row2X, 48);
+        _lblQuality.Location = new Point(row2X, 47);
         row2X = _lblQuality.Right + 6;
-        _trkQuality.Location = new Point(row2X, 46);
+        _trkQuality.Location = new Point(row2X, 45);
         row2X = _trkQuality.Right + 6;
-        _lblQualityValue.Location = new Point(row2X, 48);
-        row2X = _lblQualityValue.Right + 16;
-        _lblMode.Location = new Point(row2X, 48);
+        _lblQualityValue.Location = new Point(row2X, 47);
+        row2X = _lblQualityValue.Right + 14;
+        _lblMode.Location = new Point(row2X, 47);
         row2X = _lblMode.Right + 8;
-        _rbRudpMode.Location = new Point(row2X, 46);
-        row2X = _rbRudpMode.Right + 12;
-        _rbTcpMode.Location = new Point(row2X, 46);
+        _rbRudpMode.Location = new Point(row2X, 45);
+        row2X = _rbRudpMode.Right + 10;
+        _rbTcpMode.Location = new Point(row2X, 45);
+        row2X = _rbTcpMode.Right + 16;
+
+        _btnToggleSim.Location = new Point(row2X, 42);
 
         int stopX = w - pad - _btnStop.Width;
         int startX = stopX - 10 - _btnStart.Width;
-        if (startX < _rbTcpMode.Right + 12)
+        if (startX < _btnToggleSim.Right + 12)
         {
-            startX = _rbTcpMode.Right + 12;
+            startX = _btnToggleSim.Right + 12;
             stopX = startX + _btnStart.Width + 10;
         }
-        _btnStart.Location = new Point(startX, 43);
-        _btnStop.Location = new Point(stopX, 43);
+        _btnStart.Location = new Point(startX, 42);
+        _btnStop.Location = new Point(stopX, 42);
+
+        // Row 3: Network Simulation Cluster
+        int row3X = pad;
+        _lblSimLoss.Location = new Point(row3X, 83);
+        row3X = _lblSimLoss.Right + 6;
+        _trkSimLoss.Location = new Point(row3X, 81);
+        row3X = _trkSimLoss.Right + 6;
+        _lblSimLossVal.Location = new Point(row3X, 83);
+        row3X = _lblSimLossVal.Right + 18;
+
+        _lblSimLatency.Location = new Point(row3X, 83);
+        row3X = _lblSimLatency.Right + 6;
+        _trkSimLatency.Location = new Point(row3X, 81);
+        row3X = _trkSimLatency.Right + 6;
+        _lblSimLatencyVal.Location = new Point(row3X, 83);
+        row3X = _lblSimLatencyVal.Right + 18;
+
+        _chkNack.Location = new Point(row3X, 80);
+        row3X = _chkNack.Right + 14;
+
+        _btnResetSim.Location = new Point(row3X, 80);
+    }
+
+    private void ApplyModeSettings(bool isTcp)
+    {
+        _isTcpMode = isTcp;
+        if (isTcp)
+        {
+            _chkNack.Enabled = false;
+            _receiver.EnableNack = false;
+            _trkSimLoss.Enabled = false;
+            _lblSimLoss.ForeColor = TextMuted;
+            _lblSimLossVal.ForeColor = TextMuted;
+            if (_isStreaming)
+            {
+                StartTcpReceiver();
+            }
+        }
+        else
+        {
+            _chkNack.Enabled = true;
+            _receiver.EnableNack = _chkNack.Checked;
+            _trkSimLoss.Enabled = true;
+            _lblSimLoss.ForeColor = TextPrimary;
+            _lblSimLossVal.ForeColor = Color.FromArgb(248, 113, 113);
+            StopTcpReceiver();
+        }
     }
 
     private void HookEvents()
@@ -268,8 +427,30 @@ public partial class Form1 : Form
         _trkQuality.ValueChanged += (_, _) =>
         {
             _lblQualityValue.Text = $"{_trkQuality.Value}%";
-            if (_tcpClient.IsConnected)
+            if (!_updatingQualityFromRemote && _tcpClient.IsConnected)
                 _ = _tcpClient.SendSetQualityAsync((byte)_trkQuality.Value);
+        };
+
+        _btnToggleSim.Click += (_, _) => ToggleSimCluster();
+
+        _trkSimLoss.ValueChanged += (_, _) =>
+        {
+            _lblSimLossVal.Text = $"{_trkSimLoss.Value}%";
+            _receiver.Chaos.DropRatePercent = _trkSimLoss.Value;
+        };
+
+        _trkSimLatency.ValueChanged += (_, _) =>
+        {
+            _lblSimLatencyVal.Text = $"{_trkSimLatency.Value} ms";
+            _receiver.Chaos.LatencyMs = _trkSimLatency.Value;
+        };
+
+        _btnResetSim.Click += (_, _) =>
+        {
+            _trkSimLoss.Value = 0;
+            _trkSimLatency.Value = 0;
+            _chkNack.Checked = true;
+            _receiver.EnableNack = true;
         };
 
         _chkNack.CheckedChanged += (_, _) =>
@@ -280,23 +461,17 @@ public partial class Form1 : Form
         _rbRudpMode.CheckedChanged += (_, _) =>
         {
             if (!_rbRudpMode.Checked) return;
-            _isTcpMode = false;
-            _chkNack.Enabled = true;
-            if (_tcpClient.IsConnected)
+            ApplyModeSettings(isTcp: false);
+            if (!_updatingModeFromRemote && _tcpClient.IsConnected)
                 _ = _tcpClient.SendSwitchModeAsync(0x00);
-            StopTcpReceiver();
         };
 
         _rbTcpMode.CheckedChanged += (_, _) =>
         {
             if (!_rbTcpMode.Checked) return;
-            _isTcpMode = true;
-            _chkNack.Enabled = false;
-            if (_tcpClient.IsConnected)
-            {
+            ApplyModeSettings(isTcp: true);
+            if (!_updatingModeFromRemote && _tcpClient.IsConnected)
                 _ = _tcpClient.SendSwitchModeAsync(0x01);
-                StartTcpReceiver();
-            }
         };
 
         _btnConnect.Click += async (_, _) =>
@@ -309,6 +484,7 @@ public partial class Form1 : Form
             try
             {
                 _receiver.Rebind((int)_numUdpPort.Value);
+                _receiver.EnableNack = _chkNack.Checked;
                 await _tcpClient.ConnectAsync(
                     _txtHostIp.Text.Trim(),
                     (int)_numTcpPort.Value,
@@ -335,26 +511,105 @@ public partial class Form1 : Form
         {
             if (!_tcpClient.IsConnected) return;
 
-            await _tcpClient.SendStartStreamAsync();
+            _isStreaming = true;
             _btnStart.Enabled = false;
             _btnStop.Enabled = true;
             _rbRudpMode.Enabled = false;
             _rbTcpMode.Enabled = false;
+            _canvas.StatusSubText = "Receiving stream...";
 
-            if (_isTcpMode) StartTcpReceiver();
+            if (!_isTcpMode)
+            {
+                _receiver.EnableNack = _chkNack.Checked;
+            }
+            else
+            {
+                StartTcpReceiver();
+            }
+
+            await _tcpClient.SendStartStreamAsync();
         };
 
         _btnStop.Click += async (_, _) =>
         {
             if (!_tcpClient.IsConnected) return;
 
-            await _tcpClient.SendStopStreamAsync();
+            _isStreaming = false;
             _btnStart.Enabled = true;
             _btnStop.Enabled = false;
             _rbRudpMode.Enabled = true;
             _rbTcpMode.Enabled = true;
             StopTcpReceiver();
+            _canvas.ClearFrame("Stream stopped. Click 'Start' to receive screen.");
+
+            await _tcpClient.SendStopStreamAsync();
         };
+
+        _tcpClient.StartStreamReceived += () => Invoke(() =>
+        {
+            _isStreaming = true;
+            _btnStart.Enabled = false;
+            _btnStop.Enabled = true;
+            _rbRudpMode.Enabled = false;
+            _rbTcpMode.Enabled = false;
+            _canvas.StatusSubText = "Receiving stream from Host...";
+
+            if (_isTcpMode)
+            {
+                StartTcpReceiver();
+            }
+            else
+            {
+                _receiver.EnableNack = _chkNack.Checked;
+            }
+        });
+
+        _tcpClient.StopStreamReceived += () => Invoke(() =>
+        {
+            _isStreaming = false;
+            _btnStart.Enabled = true;
+            _btnStop.Enabled = false;
+            _rbRudpMode.Enabled = true;
+            _rbTcpMode.Enabled = true;
+            StopTcpReceiver();
+            _canvas.ClearFrame("Stream stopped by Host. Click 'Start' to receive screen.");
+        });
+
+        _tcpClient.QualityChanged += q => Invoke(() =>
+        {
+            _updatingQualityFromRemote = true;
+            try
+            {
+                _trkQuality.Value = Math.Clamp(q, _trkQuality.Minimum, _trkQuality.Maximum);
+                _lblQualityValue.Text = $"{_trkQuality.Value}%";
+            }
+            finally
+            {
+                _updatingQualityFromRemote = false;
+            }
+        });
+
+        _tcpClient.ModeChanged += mode => Invoke(() =>
+        {
+            _updatingModeFromRemote = true;
+            try
+            {
+                if (mode == 0x01)
+                {
+                    _rbTcpMode.Checked = true;
+                    ApplyModeSettings(isTcp: true);
+                }
+                else
+                {
+                    _rbRudpMode.Checked = true;
+                    ApplyModeSettings(isTcp: false);
+                }
+            }
+            finally
+            {
+                _updatingModeFromRemote = false;
+            }
+        });
 
         _tcpClient.Connected += () => Invoke(() =>
         {
@@ -363,14 +618,17 @@ public partial class Form1 : Form
             _txtHostIp.Enabled = false;
             _numTcpPort.Enabled = false;
             _numUdpPort.Enabled = false;
-            _btnStart.Enabled = true;
-            _btnStop.Enabled = false;
+            _btnStart.Enabled = !_isStreaming;
+            _btnStop.Enabled = _isStreaming;
             _trkQuality.Enabled = true;
-            _canvas.StatusSubText = "Connected. Click 'Start' to receive screen.";
+            _canvas.StatusSubText = _isStreaming
+                ? "Receiving stream from Host..."
+                : "Connected. Click 'Start' to receive screen.";
         });
 
         _tcpClient.Disconnected += () => Invoke(() =>
         {
+            _isStreaming = false;
             _btnConnect.Enabled = true;
             _btnDisconnect.Enabled = false;
             _txtHostIp.Enabled = true;
@@ -387,7 +645,7 @@ public partial class Form1 : Form
 
         _tcpClient.StatusReceived += msg => Invoke(() =>
         {
-            Text = $"↔  RUDP Viewer App – Host: {msg}";
+            Text = $"RUDP Viewer App - Host: {msg}";
         });
     }
 
@@ -403,7 +661,20 @@ public partial class Form1 : Form
         {
             try
             {
-                await _tcpStreamReceiver.ConnectAsync(host, port, ct);
+                int retries = 5;
+                while (retries > 0 && !ct.IsCancellationRequested)
+                {
+                    try
+                    {
+                        await _tcpStreamReceiver.ConnectAsync(host, port, ct);
+                        break;
+                    }
+                    catch when (retries > 1 && !ct.IsCancellationRequested)
+                    {
+                        retries--;
+                        await Task.Delay(100, ct);
+                    }
+                }
                 await TcpDecodeAndRenderLoopAsync(ct);
             }
             catch { }
@@ -428,6 +699,11 @@ public partial class Form1 : Form
                 if (_isTcpMode) continue;
                 try
                 {
+                    if (_receiver.Chaos.LatencyMs > 0)
+                    {
+                        await Task.Delay(_receiver.Chaos.LatencyMs);
+                    }
+
                     using var ms = new MemoryStream(frame.PooledBuffer, 0, frame.Length, writable: false);
                     var bmp = new Bitmap(ms);
 
@@ -452,6 +728,11 @@ public partial class Form1 : Form
             if (!_isTcpMode) continue;
             try
             {
+                if (_receiver.Chaos.LatencyMs > 0)
+                {
+                    await Task.Delay(_receiver.Chaos.LatencyMs, ct);
+                }
+
                 using var ms = new MemoryStream(data, 0, length, writable: false);
                 var bmp = new Bitmap(ms);
 
@@ -476,14 +757,14 @@ public partial class Form1 : Form
         string modeText = _isTcpMode ? "TCP" : "RUDP";
 
         _lblTelemetry.Text =
-            $"● Frame: {_lastFrameId} ({_lastFrameBytes / 1024.0:F1} KB)   |   " +
+            $"Frame: {_lastFrameId} ({_lastFrameBytes / 1024.0:F1} KB)   |   " +
             $"{_metrics.CurrentFps:F1} FPS ({_metrics.CurrentBitrateMbps:F2} Mbps)   |   " +
             $"Mode: {modeText}   |   " +
             $"OK: {r.TotalFramesCompleted}   |   " +
             $"Drop: {r.TotalFramesDroppedIncomplete}   |   " +
             $"Chaos: {chaos.DropRatePercent}% ({chaos.TotalPacketsDropped})   |   " +
             $"Lat: {_lastLatencyMs} ms   |   " +
-            $"TCP: {(_tcpClient.IsConnected ? "✓" : "X")}";
+            $"TCP: {(_tcpClient.IsConnected ? "Connected" : "Disconnected")}";
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)

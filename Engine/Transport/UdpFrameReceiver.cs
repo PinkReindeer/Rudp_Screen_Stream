@@ -40,10 +40,7 @@ public sealed class UdpFrameReceiver : IDisposable
         set
         {
             NackTracker.IsEnabled = value;
-            if (value)
-            {
-                _reassembler.EnableRingBuffer = true;
-            }
+            _reassembler.EnableRingBuffer = value;
         }
     }
 
@@ -61,6 +58,8 @@ public sealed class UdpFrameReceiver : IDisposable
         }, droppedFrame => droppedFrame.Dispose());
 
         NackTracker.NackRequested += OnNackRequested;
+
+        EnableNack = true;
 
         BindAndStart(listenPort);
     }

@@ -139,40 +139,12 @@ public class ModernButton : Button
         e.Graphics.FillPath(brush, path);
 
         Color textCol = Enabled ? ForeColor : Color.FromArgb(115, 128, 145);
+        string display = string.IsNullOrEmpty(_customIcon) ? Text : $"{_customIcon}  {Text}";
+        var size = e.Graphics.MeasureString(display, Font);
+        float tx = (Width - size.Width) / 2;
+        float ty = (Height - size.Height) / 2;
 
-        if (_customIcon == "link")
-        {
-            var textSize = e.Graphics.MeasureString(Text, Font);
-            float iconW = 14;
-            float gap = 6;
-            float totalW = iconW + gap + textSize.Width;
-            float startX = (Width - totalW) / 2f;
-            float iconY = Height / 2f;
-
-            using (var pen = new Pen(textCol, 1.8f))
-            {
-                pen.StartCap = LineCap.Round;
-                pen.EndCap = LineCap.Round;
-                e.Graphics.DrawArc(pen, startX, iconY - 4.5f, 8, 9, 90, 180);
-                e.Graphics.DrawLine(pen, startX + 4, iconY - 4.5f, startX + 7, iconY - 4.5f);
-                e.Graphics.DrawLine(pen, startX + 4, iconY + 4.5f, startX + 7, iconY + 4.5f);
-
-                e.Graphics.DrawArc(pen, startX + 6, iconY - 4.5f, 8, 9, 270, 180);
-                e.Graphics.DrawLine(pen, startX + 5, iconY, startX + 8, iconY);
-            }
-
-            using var textBrush = new SolidBrush(textCol);
-            e.Graphics.DrawString(Text, Font, textBrush, startX + iconW + gap, (Height - textSize.Height) / 2f);
-        }
-        else
-        {
-            string display = string.IsNullOrEmpty(_customIcon) ? Text : $"{_customIcon}  {Text}";
-            var size = e.Graphics.MeasureString(display, Font);
-            float tx = (Width - size.Width) / 2;
-            float ty = (Height - size.Height) / 2;
-
-            using var textBrush = new SolidBrush(textCol);
-            e.Graphics.DrawString(display, Font, textBrush, tx, ty);
-        }
+        using var textBrush = new SolidBrush(textCol);
+        e.Graphics.DrawString(display, Font, textBrush, tx, ty);
     }
 }

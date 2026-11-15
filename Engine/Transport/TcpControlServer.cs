@@ -10,6 +10,7 @@ public sealed class TcpControlServer : IDisposable
     private CancellationTokenSource? _cts;
     private NetworkStream? _clientStream;
     private readonly object _streamLock = new();
+    private readonly SemaphoreSlim _sendLock = new(1, 1);
 
     public event Action<IPEndPoint>? ClientConnected;
     public event Action? ClientDisconnected;
@@ -88,7 +89,7 @@ public sealed class TcpControlServer : IDisposable
                 var firstMsg = await ControlProtocol.ReadMessageAsync(stream, handshakeCts.Token);
                 if (firstMsg == null || firstMsg.Value.Type != (byte)ControlCommandType.Connect)
                 {
-                    await SendResponseAsync(ControlProtocol.RespAckError("Handshake failed: First command must be Connect"), ct);
+                    await SendDataAsync(ControlProtocol.RespAckError("Handshake failed: First command must be Connect"), ct);
                     return;
                 }
 
@@ -101,8 +102,7 @@ public sealed class TcpControlServer : IDisposable
 
                 handshakeSuccess = true;
                 IsClientConnected = true;
-                await SendResponseAsync(ControlProtocol.RespAckOk(), ct);
-
+                await SendDataAsync(ControlProtocol.RespAckOk(), ct);
                 ClientConnected?.Invoke(clientUdpEndpoint);
 
                 while (!ct.IsCancellationRequested)
@@ -133,12 +133,12 @@ public sealed class TcpControlServer : IDisposable
         {
             case ControlCommandType.StartStream:
                 StartStreamRequested?.Invoke();
-                await SendResponseAsync(ControlProtocol.RespAckOk(), ct);
+                await SendDataAsync(ControlProtocol.RespAckOk(), ct);
                 break;
 
             case ControlCommandType.StopStream:
                 StopStreamRequested?.Invoke();
-                await SendResponseAsync(ControlProtocol.RespAckOk(), ct);
+                await SendDataAsync(ControlProtocol.RespAckOk(), ct);
                 break;
 
             case ControlCommandType.SetQuality:
@@ -146,7 +146,7 @@ public sealed class TcpControlServer : IDisposable
                 {
                     int quality = Math.Clamp((int)payload[0], 1, 100);
                     QualityChangeRequested?.Invoke(quality);
-                    await SendResponseAsync(ControlProtocol.RespInfo($"Quality={quality}"), ct);
+                    await SendDataAsync(ControlProtocol.RespInfo($"Quality={quality}"), ct);
                 }
                 break;
 
@@ -154,27 +154,50 @@ public sealed class TcpControlServer : IDisposable
                 if (payload.Length >= 1)
                 {
                     SwitchModeRequested?.Invoke(payload[0]);
-                    await SendResponseAsync(ControlProtocol.RespAckOk(), ct);
+                    await SendDataAsync(ControlProtocol.RespAckOk(), ct);
                 }
                 break;
 
             case ControlCommandType.Disconnect:
                 StopStreamRequested?.Invoke();
-                await SendResponseAsync(ControlProtocol.RespAckOk(), ct);
+                await SendDataAsync(ControlProtocol.RespAckOk(), ct);
                 DisconnectClient();
                 break;
         }
     }
 
-    private async Task SendResponseAsync(byte[] data, CancellationToken ct)
+    public async Task SendDataAsync(byte[] data, CancellationToken ct = default)
     {
         NetworkStream? stream;
         lock (_streamLock) stream = _clientStream;
         if (stream is null) return;
 
-        try { await stream.WriteAsync(data, ct); }
+        try
+        {
+            await _sendLock.WaitAsync(ct);
+            try
+            {
+                await stream.WriteAsync(data, ct);
+            }
+            finally
+            {
+                _sendLock.Release();
+            }
+        }
         catch { }
     }
+
+    public Task SendStartStreamAsync(CancellationToken ct = default) =>
+        SendDataAsync(ControlProtocol.CmdStart(), ct);
+
+    public Task SendStopStreamAsync(CancellationToken ct = default) =>
+        SendDataAsync(ControlProtocol.CmdStop(), ct);
+
+    public Task SendSetQualityAsync(byte quality, CancellationToken ct = default) =>
+        SendDataAsync(ControlProtocol.CmdQuality(quality), ct);
+
+    public Task SendSwitchModeAsync(byte mode, CancellationToken ct = default) =>
+        SendDataAsync(ControlProtocol.CmdSwitchMode(mode), ct);
 
     public void DisconnectClient()
     {

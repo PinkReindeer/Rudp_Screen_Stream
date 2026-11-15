@@ -3,5 +3,4 @@
   <Project Path="HostApp/HostApp.csproj" />
   <Project Path="Protocol/Protocol.csproj" />
   <Project Path="ViewerApp/ViewerApp.csproj" />
-  <Project Path="Tests/ScreenStream.Tests.csproj" />
 </Solution>

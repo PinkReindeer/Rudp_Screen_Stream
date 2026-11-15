@@ -16,6 +16,8 @@ public partial class Form1 : Form
     private CancellationTokenSource? _streamCts;
     private IPEndPoint? _connectedClientEndpoint;
     private bool _isTcpMode;
+    private bool _updatingQualityFromRemote;
+    private bool _updatingModeFromRemote;
 
     private static readonly Color AppBackground = Color.FromArgb(11, 17, 30);
     private static readonly Color CardBackground = Color.FromArgb(22, 34, 53);
@@ -25,31 +27,27 @@ public partial class Form1 : Form
     private static readonly Color SuccessGreen = Color.FromArgb(34, 197, 94);
     private static readonly Color AccentCyan = Color.FromArgb(56, 189, 248);
 
-    private readonly HostSidebar _sidebar = new() { Dock = DockStyle.Left };
     private readonly Panel _pnlContent = new() { Dock = DockStyle.Fill, BackColor = AppBackground, AutoScroll = true };
 
     private readonly ModernCard _cardNet = new()
     {
-        CardIcon = "wifi",
         Title = "Network Configuration",
-        StatusBadge = "● Ready",
+        StatusBadge = "Ready",
         StatusBadgeColor = SuccessGreen
     };
     private readonly ModernCard _cardMode = new()
     {
-        CardIcon = "((•))",
         Title = "Streaming Mode"
     };
     private readonly ModernCard _cardCtrl = new()
     {
-        CardIcon = "sliders",
         Title = "Stream Controls",
         PillBadge = "85%"
     };
 
     private readonly Label _lblIp = new()
     {
-        Text = "Viewer IP:",
+        Text = "Host Local IP:",
         AutoSize = true,
         ForeColor = TextPrimary,
         Font = new Font("Segoe UI", 9.5f)
@@ -69,9 +67,10 @@ public partial class Form1 : Form
         Font = new Font("Segoe UI", 9.5f)
     };
 
-    private readonly TextBox _txtViewerIp = new()
+    private readonly TextBox _txtHostIp = new()
     {
-        Text = "127.0.0.1",
+        Text = NetworkUtils.GetLocalIpAddress(),
+        ReadOnly = true,
         BackColor = InputBackground,
         ForeColor = TextPrimary,
         BorderStyle = BorderStyle.FixedSingle,
@@ -79,13 +78,21 @@ public partial class Form1 : Form
     };
     private readonly ModernButton _btnCopyIp = new()
     {
-        Text = "❐",
+        Text = "Copy",
         NormalColor = Color.FromArgb(30, 41, 59),
         HoverColor = Color.FromArgb(42, 58, 82),
         PressedColor = Color.FromArgb(20, 28, 42),
         BorderRadius = 6,
-        Font = new Font("Segoe UI", 10.5f),
-        Size = new Size(34, 26)
+        Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+        Size = new Size(56, 26)
+    };
+    private readonly Label _lblConnectedViewer = new()
+    {
+        Text = "",
+        AutoSize = true,
+        ForeColor = SuccessGreen,
+        Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+        Visible = false
     };
 
     private readonly NumericUpDown _numUdpPort = new()
@@ -146,7 +153,6 @@ public partial class Form1 : Form
     private readonly Panel _pnlActions = new() { BackColor = Color.Transparent };
     private readonly ModernButton _btnStart = new()
     {
-        CustomIcon = "▶",
         Text = "Start Streaming",
         NormalColor = Color.FromArgb(24, 119, 242),
         HoverColor = Color.FromArgb(37, 133, 255),
@@ -157,7 +163,6 @@ public partial class Form1 : Form
     };
     private readonly ModernButton _btnStop = new()
     {
-        CustomIcon = "■",
         Text = "Stop",
         NormalColor = Color.FromArgb(220, 38, 38),
         HoverColor = Color.FromArgb(239, 68, 68),
@@ -168,7 +173,6 @@ public partial class Form1 : Form
     };
     private readonly ModernButton _btnDisconnect = new()
     {
-        CustomIcon = "✕",
         Text = "Disconnect Client",
         NormalColor = Color.FromArgb(36, 48, 68),
         HoverColor = Color.FromArgb(51, 65, 85),
@@ -178,24 +182,12 @@ public partial class Form1 : Form
         Enabled = false
     };
 
-    private readonly Label _lblStats = new()
-    {
-        Dock = DockStyle.Bottom,
-        Height = 32,
-        BackColor = Color.FromArgb(13, 21, 39),
-        ForeColor = SuccessGreen,
-        Font = new Font("Consolas", 8.5f, FontStyle.Bold),
-        TextAlign = ContentAlignment.MiddleLeft,
-        Padding = new Padding(12, 0, 0, 0)
-    };
-    private readonly System.Windows.Forms.Timer _statsTimer = new() { Interval = 400 };
-
     public Form1()
     {
         InitializeComponent();
-        Text = "↔  RUDP Host App";
-        Size = new Size(540, 680);
-        MinimumSize = new Size(480, 580);
+        Text = "RUDP Host App";
+        Size = new Size(540, 580);
+        MinimumSize = new Size(460, 520);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = AppBackground;
 
@@ -208,24 +200,11 @@ public partial class Form1 : Form
     private void BuildUi()
     {
         Controls.Add(_pnlContent);
-        Controls.Add(_sidebar);
-        Controls.Add(_lblStats);
 
-        _cardNet.Controls.AddRange([_lblIp, _txtViewerIp, _btnCopyIp, _lblUdp, _numUdpPort, _lblTcp, _numTcpPort]);
-        _cardNet.Height = 160;
-
-        _rbRudpMode.Location = new Point(16, 42);
-        _rbTcpMode.Location = new Point(16, 70);
+        _cardNet.Controls.AddRange([_lblIp, _txtHostIp, _btnCopyIp, _lblUdp, _numUdpPort, _lblTcp, _numTcpPort, _lblConnectedViewer]);
         _cardMode.Controls.AddRange([_rbRudpMode, _rbTcpMode]);
-        _cardMode.Height = 104;
-
-        _lblQuality.Location = new Point(16, 42);
-        _trkQuality.Location = new Point(16, 68);
         _cardCtrl.Controls.AddRange([_lblQuality, _trkQuality]);
-        _cardCtrl.Height = 108;
-
         _pnlActions.Controls.AddRange([_btnStart, _btnStop, _btnDisconnect]);
-        _pnlActions.Height = 44;
 
         _pnlContent.Controls.AddRange([_cardNet, _cardMode, _cardCtrl, _pnlActions]);
 
@@ -235,43 +214,60 @@ public partial class Form1 : Form
 
     private void UpdateLayout()
     {
+        int clientW = _pnlContent.ClientSize.Width;
+        int clientH = _pnlContent.ClientSize.Height;
+
+        int cardW = Math.Clamp(clientW - 36, 360, 480);
+        int cardX = Math.Max(16, (clientW - cardW) / 2);
+
+        int totalContentH = 185 + 12 + 100 + 12 + 104 + 16 + 40;
+        int startY = Math.Max(20, (clientH - totalContentH) / 2);
+
+        _cardNet.Location = new Point(cardX, startY);
+        _cardNet.Size = new Size(cardW, 185);
+
         int pad = 16;
-        int w = Math.Max(320, _pnlContent.ClientSize.Width - pad * 2);
+        int labelW = Math.Max(_lblIp.PreferredWidth, Math.Max(_lblUdp.PreferredWidth, _lblTcp.PreferredWidth)) + 12;
+        int inputX = pad + labelW;
+        int btnW = 56;
+        int totalInputW = cardW - inputX - pad;
+        int txtIpW = totalInputW - btnW - 8;
 
-        _cardNet.Location = new Point(pad, pad);
-        _cardNet.Width = w;
+        _lblIp.Location = new Point(pad, 47);
+        _txtHostIp.Location = new Point(inputX, 43);
+        _txtHostIp.Size = new Size(txtIpW, 26);
 
-        int labelW = Math.Max(_lblIp.PreferredWidth, Math.Max(_lblUdp.PreferredWidth, _lblTcp.PreferredWidth)) + 8;
-        int inputX = 16 + labelW;
-        int inputW = Math.Clamp(w - inputX - 56, 120, 260);
+        _btnCopyIp.Location = new Point(_txtHostIp.Right + 8, 43);
+        _btnCopyIp.Size = new Size(btnW, 26);
 
-        _lblIp.Location = new Point(16, 47);
-        _txtViewerIp.Location = new Point(inputX, 43);
-        _txtViewerIp.Width = inputW;
-        _btnCopyIp.Location = new Point(_txtViewerIp.Right + 6, 43);
+        _lblUdp.Location = new Point(pad, 85);
+        _numUdpPort.Location = new Point(inputX, 81);
+        _numUdpPort.Size = new Size(totalInputW, 26);
 
-        _lblUdp.Location = new Point(16, 83);
-        _numUdpPort.Location = new Point(inputX, 79);
-        _numUdpPort.Width = inputW + 40;
+        _lblTcp.Location = new Point(pad, 123);
+        _numTcpPort.Location = new Point(inputX, 119);
+        _numTcpPort.Size = new Size(totalInputW, 26);
 
-        _lblTcp.Location = new Point(16, 119);
-        _numTcpPort.Location = new Point(inputX, 115);
-        _numTcpPort.Width = inputW + 40;
+        _lblConnectedViewer.Location = new Point(pad, 157);
 
-        _cardMode.Location = new Point(pad, _cardNet.Bottom + 12);
-        _cardMode.Width = w;
+        _cardMode.Location = new Point(cardX, _cardNet.Bottom + 12);
+        _cardMode.Size = new Size(cardW, 100);
+        _rbRudpMode.Location = new Point(pad, 40);
+        _rbTcpMode.Location = new Point(pad, 68);
 
-        _cardCtrl.Location = new Point(pad, _cardMode.Bottom + 12);
-        _cardCtrl.Width = w;
-        _trkQuality.Width = Math.Max(100, w - 32);
+        _cardCtrl.Location = new Point(cardX, _cardMode.Bottom + 12);
+        _cardCtrl.Size = new Size(cardW, 104);
+        _lblQuality.Location = new Point(pad, 40);
+        _trkQuality.Location = new Point(pad, 66);
+        _trkQuality.Size = new Size(cardW - pad * 2, 24);
 
-        _pnlActions.Location = new Point(pad, _cardCtrl.Bottom + 16);
-        _pnlActions.Width = w;
+        _pnlActions.Location = new Point(cardX, _cardCtrl.Bottom + 16);
+        _pnlActions.Size = new Size(cardW, 40);
 
         int btnGap = 8;
-        int totalBtnW = w - btnGap * 2;
-        int startW = (int)(totalBtnW * 0.40f);
-        int stopW = (int)(totalBtnW * 0.22f);
+        int totalBtnW = cardW - btnGap * 2;
+        int startW = (int)(totalBtnW * 0.42f);
+        int stopW = (int)(totalBtnW * 0.20f);
         int discW = totalBtnW - startW - stopW;
 
         _btnStart.Location = new Point(0, 0);
@@ -288,14 +284,19 @@ public partial class Form1 : Form
     {
         _btnCopyIp.Click += (_, _) =>
         {
-            if (!string.IsNullOrWhiteSpace(_txtViewerIp.Text))
+            if (!string.IsNullOrWhiteSpace(_txtHostIp.Text))
             {
-                Clipboard.SetText(_txtViewerIp.Text.Trim());
-                _btnCopyIp.Text = "✓";
+                try
+                {
+                    Clipboard.SetText(_txtHostIp.Text.Trim());
+                }
+                catch { }
+
+                _btnCopyIp.Text = "Copied!";
                 Task.Delay(1000).ContinueWith(_ =>
                 {
                     if (!IsDisposed && IsHandleCreated)
-                        BeginInvoke(() => _btnCopyIp.Text = "❐");
+                        BeginInvoke(() => _btnCopyIp.Text = "Copy");
                 });
             }
         };
@@ -311,45 +312,90 @@ public partial class Form1 : Form
             _lblQuality.Text = $"JPEG Quality: {_trkQuality.Value}%";
             _cardCtrl.PillBadge = $"{_trkQuality.Value}%";
             _capturer.JpegQuality = _trkQuality.Value;
+
+            if (!_updatingQualityFromRemote && _tcpServer.IsClientConnected)
+            {
+                _ = _tcpServer.SendSetQualityAsync((byte)_trkQuality.Value);
+            }
         };
 
         _rbRudpMode.CheckedChanged += (_, _) =>
         {
-            if (_rbRudpMode.Checked) _isTcpMode = false;
-        };
-        _rbTcpMode.CheckedChanged += (_, _) =>
-        {
-            if (_rbTcpMode.Checked) _isTcpMode = true;
+            if (!_rbRudpMode.Checked) return;
+            bool wasTcp = _isTcpMode;
+            _isTcpMode = false;
+
+            if (!_updatingModeFromRemote)
+            {
+                if (_tcpServer.IsClientConnected)
+                {
+                    _ = _tcpServer.SendSwitchModeAsync(0x00);
+                }
+                if (_streamCts != null && wasTcp)
+                {
+                    StopStreaming(notifyClient: false);
+                    StartStreaming(notifyClient: false);
+                }
+            }
         };
 
-        _btnStart.Click += (_, _) => StartStreaming();
-        _btnStop.Click += (_, _) => StopStreaming();
+        _rbTcpMode.CheckedChanged += (_, _) =>
+        {
+            if (!_rbTcpMode.Checked) return;
+            bool wasTcp = _isTcpMode;
+            _isTcpMode = true;
+
+            if (!_updatingModeFromRemote)
+            {
+                if (_tcpServer.IsClientConnected)
+                {
+                    _ = _tcpServer.SendSwitchModeAsync(0x01);
+                }
+                if (_streamCts != null && !wasTcp)
+                {
+                    StopStreaming(notifyClient: false);
+                    StartStreaming(notifyClient: false);
+                }
+            }
+        };
+
+        _btnStart.Click += (_, _) => StartStreaming(notifyClient: true);
+        _btnStop.Click += (_, _) => StopStreaming(notifyClient: true);
         _btnDisconnect.Click += (_, _) => _tcpServer.DisconnectClient();
 
         _tcpServer.ClientConnected += clientUdpEp => Invoke(() =>
         {
             _connectedClientEndpoint = clientUdpEp;
-            _txtViewerIp.Text = clientUdpEp.Address.ToString();
+            _lblConnectedViewer.Text = $"Connected Viewer: {clientUdpEp.Address}";
+            _lblConnectedViewer.Visible = true;
             _numUdpPort.Value = clientUdpEp.Port;
-            _cardNet.StatusBadge = "● Connected";
+            _cardNet.StatusBadge = "Connected";
             _cardNet.StatusBadgeColor = SuccessGreen;
 
-            _txtViewerIp.Enabled = false;
             _numUdpPort.Enabled = false;
             _numTcpPort.Enabled = false;
 
-            _btnStart.Enabled = true;
-            _btnStop.Enabled = false;
+            _btnStart.Enabled = _streamCts == null;
+            _btnStop.Enabled = _streamCts != null;
             _btnDisconnect.Enabled = true;
+
+            // Synchronize host settings to viewer upon connection
+            _ = _tcpServer.SendSetQualityAsync((byte)_trkQuality.Value);
+            _ = _tcpServer.SendSwitchModeAsync(_isTcpMode ? (byte)0x01 : (byte)0x00);
+            if (_streamCts != null)
+            {
+                _ = _tcpServer.SendStartStreamAsync();
+            }
         });
 
         _tcpServer.ClientDisconnected += () => Invoke(() =>
         {
             _connectedClientEndpoint = null;
-            _cardNet.StatusBadge = "● Ready";
+            _lblConnectedViewer.Text = string.Empty;
+            _lblConnectedViewer.Visible = false;
+            _cardNet.StatusBadge = "Ready";
             _cardNet.StatusBadgeColor = SuccessGreen;
 
-            _txtViewerIp.Enabled = true;
             _numUdpPort.Enabled = true;
             _numTcpPort.Enabled = true;
 
@@ -359,35 +405,50 @@ public partial class Form1 : Form
             StopStreaming();
         });
 
-        _tcpServer.StartStreamRequested += () => Invoke(StartStreaming);
-        _tcpServer.StopStreamRequested += () => Invoke(StopStreaming);
+        _tcpServer.StartStreamRequested += () => Invoke(() => StartStreaming(notifyClient: false));
+        _tcpServer.StopStreamRequested += () => Invoke(() => StopStreaming(notifyClient: false));
         _tcpServer.QualityChangeRequested += q => Invoke(() =>
         {
-            _trkQuality.Value = Math.Clamp(q, _trkQuality.Minimum, _trkQuality.Maximum);
-            _capturer.JpegQuality = q;
+            _updatingQualityFromRemote = true;
+            try
+            {
+                _trkQuality.Value = Math.Clamp(q, _trkQuality.Minimum, _trkQuality.Maximum);
+                _lblQuality.Text = $"JPEG Quality: {_trkQuality.Value}%";
+                _cardCtrl.PillBadge = $"{_trkQuality.Value}%";
+                _capturer.JpegQuality = q;
+            }
+            finally
+            {
+                _updatingQualityFromRemote = false;
+            }
         });
 
         _tcpServer.SwitchModeRequested += mode => Invoke(() =>
         {
             bool wasTcp = _isTcpMode;
             _isTcpMode = mode == 0x01;
-            if (_isTcpMode)
-                _rbTcpMode.Checked = true;
-            else
-                _rbRudpMode.Checked = true;
+            _updatingModeFromRemote = true;
+            try
+            {
+                if (_isTcpMode)
+                    _rbTcpMode.Checked = true;
+                else
+                    _rbRudpMode.Checked = true;
+            }
+            finally
+            {
+                _updatingModeFromRemote = false;
+            }
 
             if (_streamCts != null && wasTcp != _isTcpMode)
             {
-                StopStreaming();
-                StartStreaming();
+                StopStreaming(notifyClient: false);
+                StartStreaming(notifyClient: false);
             }
         });
-
-        _statsTimer.Tick += (_, _) => RefreshStats();
-        _statsTimer.Start();
     }
 
-    private void StartStreaming()
+    private void StartStreaming(bool notifyClient = true)
     {
         if (_streamCts != null || _connectedClientEndpoint == null) return;
 
@@ -405,14 +466,19 @@ public partial class Form1 : Form
         _btnStop.Enabled = true;
         _rbRudpMode.Enabled = false;
         _rbTcpMode.Enabled = false;
-        _cardNet.StatusBadge = "● Streaming";
+        _cardNet.StatusBadge = "Streaming";
         _cardNet.StatusBadgeColor = AccentCyan;
+
+        if (notifyClient && _tcpServer.IsClientConnected)
+        {
+            _ = _tcpServer.SendStartStreamAsync();
+        }
 
         var token = _streamCts.Token;
         _ = Task.Run(() => StreamLoopAsync(endpoint, token), token);
     }
 
-    private void StopStreaming()
+    private void StopStreaming(bool notifyClient = true)
     {
         if (_streamCts == null) return;
 
@@ -426,13 +492,18 @@ public partial class Form1 : Form
 
         if (_connectedClientEndpoint != null)
         {
-            _cardNet.StatusBadge = "● Connected";
+            _cardNet.StatusBadge = "Connected";
             _cardNet.StatusBadgeColor = SuccessGreen;
         }
         else
         {
-            _cardNet.StatusBadge = "● Ready";
+            _cardNet.StatusBadge = "Ready";
             _cardNet.StatusBadgeColor = SuccessGreen;
+        }
+
+        if (notifyClient && _tcpServer.IsClientConnected)
+        {
+            _ = _tcpServer.SendStopStreamAsync();
         }
 
         _tcpStreamSender?.Dispose();
@@ -459,39 +530,8 @@ public partial class Form1 : Form
         }
     }
 
-    private void RefreshStats()
-    {
-        double mbSent;
-        long pktsSent;
-        string mode;
-
-        if (_isTcpMode && _tcpStreamSender != null)
-        {
-            mbSent = _tcpStreamSender.TotalBytesSent / 1_048_576.0;
-            pktsSent = _tcpStreamSender.TotalFramesSent;
-            mode = "TCP";
-        }
-        else
-        {
-            mbSent = _sender.TotalBytesSent / 1_048_576.0;
-            pktsSent = _sender.TotalPacketsSent;
-            mode = "RUDP";
-        }
-
-        bool streaming = _streamCts != null;
-        _lblStats.Text =
-            $"Status: {(streaming ? "🔴 Streaming" : "⏸ Idle")}  |  " +
-            $"Mode: {mode}  |  " +
-            $"Sent: {pktsSent:N0} ({mbSent:F2} MB)  |  " +
-            $"NACK: {_sender.TotalNacksReceived:N0}  |  " +
-            $"Retx: {_sender.TotalPacketsRetransmitted:N0}  |  " +
-            $"Q: {_capturer.JpegQuality}%  |  " +
-            $"TCP: {(_tcpServer.IsClientConnected ? "OK" : $":{_numTcpPort.Value}")}";
-    }
-
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        _statsTimer.Stop();
         StopStreaming();
         _tcpServer.Dispose();
         _sender.Dispose();

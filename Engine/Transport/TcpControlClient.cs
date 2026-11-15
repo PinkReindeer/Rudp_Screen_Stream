@@ -9,10 +9,15 @@ public sealed class TcpControlClient : IDisposable
     private NetworkStream? _stream;
     private CancellationTokenSource? _cts;
     private readonly object _lock = new();
+    private readonly SemaphoreSlim _sendLock = new(1, 1);
 
     public event Action? Connected;
     public event Action? Disconnected;
     public event Action<string>? StatusReceived;
+    public event Action? StartStreamReceived;
+    public event Action? StopStreamReceived;
+    public event Action<int>? QualityChanged;
+    public event Action<byte>? ModeChanged;
 
     public bool IsConnected { get; private set; }
 
@@ -126,7 +131,18 @@ public sealed class TcpControlClient : IDisposable
         lock (_lock) stream = _stream;
         if (stream is null) return;
 
-        try { await stream.WriteAsync(data, ct); }
+        try
+        {
+            await _sendLock.WaitAsync(ct);
+            try
+            {
+                await stream.WriteAsync(data, ct);
+            }
+            finally
+            {
+                _sendLock.Release();
+            }
+        }
         catch { HandleDisconnect(); }
     }
 
@@ -139,14 +155,40 @@ public sealed class TcpControlClient : IDisposable
                 var msg = await ControlProtocol.ReadMessageAsync(_stream, ct);
                 if (msg is null) break;
 
-                string text = msg.Value.Type switch
+                switch ((ControlCommandType)msg.Value.Type)
                 {
-                    (byte)ControlResponseType.Ack => ControlProtocol.ParseAck(msg.Value.Payload).Message,
-                    (byte)ControlResponseType.Info => System.Text.Encoding.UTF8.GetString(msg.Value.Payload),
-                    _ => $"Unknown response 0x{msg.Value.Type:X2}"
-                };
+                    case ControlCommandType.StartStream:
+                        StartStreamReceived?.Invoke();
+                        break;
 
-                StatusReceived?.Invoke(text);
+                    case ControlCommandType.StopStream:
+                        StopStreamReceived?.Invoke();
+                        break;
+
+                    case ControlCommandType.SetQuality:
+                        if (msg.Value.Payload.Length >= 1)
+                        {
+                            QualityChanged?.Invoke(msg.Value.Payload[0]);
+                        }
+                        break;
+
+                    case ControlCommandType.SwitchMode:
+                        if (msg.Value.Payload.Length >= 1)
+                        {
+                            ModeChanged?.Invoke(msg.Value.Payload[0]);
+                        }
+                        break;
+
+                    default:
+                        string text = msg.Value.Type switch
+                        {
+                            (byte)ControlResponseType.Ack => ControlProtocol.ParseAck(msg.Value.Payload).Message,
+                            (byte)ControlResponseType.Info => System.Text.Encoding.UTF8.GetString(msg.Value.Payload),
+                            _ => $"Unknown response 0x{msg.Value.Type:X2}"
+                        };
+                        StatusReceived?.Invoke(text);
+                        break;
+                }
             }
         }
         catch (OperationCanceledException) { }
