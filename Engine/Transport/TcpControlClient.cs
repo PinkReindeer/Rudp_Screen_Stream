@@ -16,7 +16,6 @@ public sealed class TcpControlClient : IDisposable
 
     public bool IsConnected { get; private set; }
 
-    // Connect
     public async Task ConnectAsync(string host, int tcpPort, ushort myUdpPort, CancellationToken ct = default)
     {
         Disconnect();
@@ -47,7 +46,7 @@ public sealed class TcpControlClient : IDisposable
             _stream = stream;
         }
 
-        await stream.WriteAsync(ControlProtocol.CmdConnect(myUdpPort), connectCts.Token);
+        await stream.WriteAsync(ControlProtocol.CmdConnect(myUdpPort, host), connectCts.Token);
 
         var resp = await ControlProtocol.ReadMessageAsync(stream, connectCts.Token);
         if (resp == null)

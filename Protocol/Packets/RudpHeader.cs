@@ -7,25 +7,26 @@ namespace Protocol.Packets;
 public enum PacketFlags : byte
 {
     None = 0,
-    Data = 1 << 0,  // 0x01
-    Ack = 1 << 1,  // 0x02
-    Nack = 1 << 2,  // 0x04
-    Keyframe = 1 << 3  // 0x08
+    Data = 1 << 0,
+    Ack = 1 << 1,
+    Nack = 1 << 2,
+    Keyframe = 1 << 3,
+    Probe = 1 << 4
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
 public readonly struct RudpHeader
 {
     public const int Size = 15;
-    public const int MaxPayloadSize = 1385; // 15 + 1385 = 1400 bytes
+    public const int MaxPayloadSize = 1385;
     public const int MaxPacketSize = Size + MaxPayloadSize;
 
-    public readonly uint FrameID;           // 4 bytes
-    public readonly ushort FragmentID;      // 2 bytes
-    public readonly ushort TotalFragments;  // 2 bytes
-    public readonly PacketFlags Flags;      // 1 byte
-    public readonly uint TimestampMs;       // 4 bytes
-    public readonly ushort PayloadLength;   // 2 bytes
+    public readonly uint FrameID;
+    public readonly ushort FragmentID;
+    public readonly ushort TotalFragments;
+    public readonly PacketFlags Flags;
+    public readonly uint TimestampMs;
+    public readonly ushort PayloadLength;
 
     public RudpHeader(uint frameID, ushort fragmentID, ushort totalFragments, PacketFlags flags, uint timestampMs, ushort payloadLength)
     {

@@ -15,6 +15,13 @@ public sealed class VideoCanvas : Control
         set { _statusSubText = value; Invalidate(); }
     }
 
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public string StatusText
+    {
+        get => _statusSubText;
+        set { _statusSubText = value; Invalidate(); }
+    }
+
     public VideoCanvas()
     {
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |

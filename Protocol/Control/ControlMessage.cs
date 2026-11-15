@@ -1,4 +1,6 @@
 using System.Buffers.Binary;
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
 
 namespace Protocol.Control;
@@ -10,7 +12,8 @@ public enum ControlCommandType : byte
     StopStream  = 0x03,
     SetQuality  = 0x04,
     Disconnect  = 0x05,
-    SwitchMode  = 0x06
+    SwitchMode  = 0x06,
+    UdpProbeAck = 0x07
 }
 
 public enum ControlResponseType : byte
@@ -22,8 +25,6 @@ public enum ControlResponseType : byte
 public static class ControlProtocol
 {
     public const int DefaultTcpPort = 9001;
-
-    // Serialise
 
     public static byte[] BuildCommand(ControlCommandType cmd, byte[]? payload = null)
     {
@@ -45,12 +46,15 @@ public static class ControlProtocol
         return buf;
     }
 
-    // Convenience helpers
-
-    public static byte[] CmdConnect(ushort viewerUdpPort, string targetHostIp)
+    public static byte[] CmdConnect(ushort viewerUdpPort, string targetHostIp = "")
     {
-        var payload = new byte[2];
-        BinaryPrimitives.WriteUInt16LittleEndian(payload, viewerUdpPort);
+        byte[] ipBytes = string.IsNullOrEmpty(targetHostIp) ? [] : Encoding.UTF8.GetBytes(targetHostIp);
+        var payload = new byte[2 + ipBytes.Length];
+        BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(0, 2), viewerUdpPort);
+        if (ipBytes.Length > 0)
+        {
+            ipBytes.CopyTo(payload, 2);
+        }
         return BuildCommand(ControlCommandType.Connect, payload);
     }
 
@@ -137,8 +141,6 @@ public static class ControlProtocol
     }
 
     public static byte[] RespInfo(string text) => BuildResponse(ControlResponseType.Info, Encoding.UTF8.GetBytes(text));
-
-    // Read a single message from a NetworkStream
 
     public static async Task<(byte Type, byte[] Payload)?> ReadMessageAsync(System.Net.Sockets.NetworkStream stream, CancellationToken ct = default)
     {

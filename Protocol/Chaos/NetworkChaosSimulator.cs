@@ -41,7 +41,3 @@ public class NetworkChaosSimulator
         Interlocked.Exchange(ref _totalDropped, 0);
     }
 }
-
-public sealed class ChaosSimulator : NetworkChaosSimulator
-{
-}

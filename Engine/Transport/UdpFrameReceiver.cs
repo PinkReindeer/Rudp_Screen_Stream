@@ -16,6 +16,7 @@ public sealed class UdpFrameReceiver : IDisposable
     private readonly Channel<CompletedFrame> _frameChannel;
     private CancellationTokenSource? _cts;
     private readonly Lock _socketLock = new();
+    private bool _isDisposed;
 
     public event Action<IPEndPoint>? ProbeReceived;
 
@@ -36,7 +37,14 @@ public sealed class UdpFrameReceiver : IDisposable
     public bool EnableNack
     {
         get => NackTracker.IsEnabled;
-        set => NackTracker.IsEnabled = value;
+        set
+        {
+            NackTracker.IsEnabled = value;
+            if (value)
+            {
+                _reassembler.EnableRingBuffer = true;
+            }
+        }
     }
 
     public int CurrentPort { get; private set; }
@@ -59,8 +67,9 @@ public sealed class UdpFrameReceiver : IDisposable
 
     public void Rebind(int newPort)
     {
-        lock (_lock)
+        lock (_socketLock)
         {
+            if (_isDisposed) return;
             if (newPort == CurrentPort && _socket != null) return;
             CurrentPort = newPort;
             StopReceiving();
@@ -72,8 +81,8 @@ public sealed class UdpFrameReceiver : IDisposable
     {
         _socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)
         {
-            ReceiveBufferSize = 8 * 1024 * 1024, // 8 MB
-            SendBufferSize = 1 * 1024 * 1024     // 1 MB for outgoing NACKs
+            ReceiveBufferSize = 8 * 1024 * 1024,
+            SendBufferSize = 1 * 1024 * 1024
         };
         _socket.Bind(new IPEndPoint(IPAddress.Any, port));
 
@@ -113,7 +122,7 @@ public sealed class UdpFrameReceiver : IDisposable
                 catch (ObjectDisposedException) { break; }
                 catch (SocketException ex) when (ex.SocketErrorCode == SocketError.ConnectionReset)
                 {
-                    continue; // Ignore ICMP Port Unreachable on Windows UDP
+                    continue;
                 }
                 catch { continue; }
 
@@ -124,7 +133,6 @@ public sealed class UdpFrameReceiver : IDisposable
 
                 var header = RudpHeader.ReadFrom(packetSpan);
 
-                // Handle UDP handshake probe packet immediately (never drop via Chaos proxy)
                 if ((header.Flags & PacketFlags.Probe) != 0)
                 {
                     if (result.RemoteEndPoint is IPEndPoint rep)
@@ -134,22 +142,19 @@ public sealed class UdpFrameReceiver : IDisposable
                     continue;
                 }
 
-                // Intercept UDP packet via ChaosSimulator
                 if (Chaos.Intercept(packetSpan))
                 {
                     Metrics.RecordPacketDropped();
-                    continue; // Dropped by chaos proxy
+                    continue;
                 }
 
                 Metrics.RecordPacket(result.ReceivedBytes);
 
-                // Notify NackTracker of incoming fragment to track sequence gaps
                 if (EnableNack && (header.Flags & PacketFlags.Data) != 0)
                 {
                     NackTracker.OnFragmentReceived(header.FrameID, header.FragmentID, header.TotalFragments);
                 }
 
-                // Push to reassembler
                 if (_reassembler.TryPushPacket(packetSpan, out var completedFrame))
                 {
                     if (EnableNack)
@@ -212,6 +217,8 @@ public sealed class UdpFrameReceiver : IDisposable
     {
         lock (_socketLock)
         {
+            if (_isDisposed) return;
+            _isDisposed = true;
             StopReceiving();
             NackTracker.NackRequested -= OnNackRequested;
             _reassembler.Dispose();

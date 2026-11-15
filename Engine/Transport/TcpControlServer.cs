@@ -10,8 +10,12 @@ public sealed class TcpControlServer : IDisposable
     private CancellationTokenSource? _cts;
     private NetworkStream? _clientStream;
     private readonly object _streamLock = new();
+    private readonly object _serverLock = new();
 
-    public event Action<IPEndPoint>? ClientConnected;
+    public Func<IPEndPoint, Task>? UdpProbeSender { get; set; }
+    public Func<IPAddress, ushort, string, (bool Valid, string Error)>? ClientValidator { get; set; }
+
+    public event Action<IPEndPoint, ushort>? ClientConnected;
     public event Action? ClientDisconnected;
     public event Action? StartStreamRequested;
     public event Action? StopStreamRequested;
@@ -28,26 +32,32 @@ public sealed class TcpControlServer : IDisposable
 
     public void Start(int port)
     {
-        Stop();
-        CurrentPort = port;
-        _listener = new TcpListener(IPAddress.Any, port);
-        _listener.Start();
-        _cts = new CancellationTokenSource();
-        _ = Task.Run(() => AcceptLoopAsync(_listener, _cts.Token));
+        lock (_serverLock)
+        {
+            Stop();
+            CurrentPort = port;
+            _listener = new TcpListener(IPAddress.Any, port);
+            _listener.Start();
+            _cts = new CancellationTokenSource();
+            _ = Task.Run(() => AcceptLoopAsync(_listener, _cts.Token));
+        }
     }
 
     public void Start() => Start(CurrentPort);
 
     public void Stop()
     {
-        _cts?.Cancel();
-        _cts?.Dispose();
-        _cts = null;
+        lock (_serverLock)
+        {
+            _cts?.Cancel();
+            _cts?.Dispose();
+            _cts = null;
 
-        DisconnectClient();
+            DisconnectClient();
 
-        try { _listener?.Stop(); } catch { }
-        _listener = null;
+            try { _listener?.Stop(); } catch { }
+            _listener = null;
+        }
     }
 
     private async Task AcceptLoopAsync(TcpListener listener, CancellationToken ct)
@@ -77,6 +87,7 @@ public sealed class TcpControlServer : IDisposable
 
             var remoteEp = client.Client.RemoteEndPoint as IPEndPoint;
             if (remoteEp == null) return;
+            var localEp = client.Client.LocalEndPoint as IPEndPoint;
 
             bool handshakeSuccess = false;
 
@@ -92,12 +103,11 @@ public sealed class TcpControlServer : IDisposable
                     return;
                 }
 
-                ushort viewerUdpPort = ControlProtocol.ParseConnect(firstMsg.Value.Payload);
+                (ushort viewerUdpPort, string targetHostIp) = ControlProtocol.ParseConnect(firstMsg.Value.Payload);
                 var clientIp = remoteEp.Address.IsIPv4MappedToIPv6
                     ? remoteEp.Address.MapToIPv4()
                     : remoteEp.Address;
 
-                // 2. Validate Target Host IP: Ensure viewer did not dial an invalid IP
                 var validHostIps = ControlProtocol.GetLocalHostIps();
                 if (!string.IsNullOrEmpty(targetHostIp) && !validHostIps.Contains(targetHostIp))
                 {
@@ -120,7 +130,6 @@ public sealed class TcpControlServer : IDisposable
                     }
                 }
 
-                // 3. Validate Viewer IP and UDP Port against Host configuration
                 if (ClientValidator != null)
                 {
                     var (valid, errorMsg) = ClientValidator(remoteEp.Address, viewerUdpPort, targetHostIp);
@@ -131,10 +140,8 @@ public sealed class TcpControlServer : IDisposable
                     }
                 }
 
-                // 4. UDP Probe check
                 if (UdpProbeSender != null)
                 {
-                    var clientIp = remoteEp.Address.IsIPv4MappedToIPv6 ? remoteEp.Address.MapToIPv4() : remoteEp.Address;
                     var viewerUdpEp = new IPEndPoint(clientIp, viewerUdpPort);
                     await UdpProbeSender(viewerUdpEp);
 
@@ -154,7 +161,7 @@ public sealed class TcpControlServer : IDisposable
                 IsClientConnected = true;
                 await SendResponseAsync(ControlProtocol.RespAckOk(), ct);
 
-                ClientConnected?.Invoke(clientUdpEndpoint);
+                ClientConnected?.Invoke(remoteEp, viewerUdpPort);
 
                 while (!ct.IsCancellationRequested)
                 {
@@ -239,5 +246,11 @@ public sealed class TcpControlServer : IDisposable
         }
     }
 
-    public void Dispose() => Stop();
+    public void Dispose()
+    {
+        lock (_serverLock)
+        {
+            Stop();
+        }
+    }
 }
