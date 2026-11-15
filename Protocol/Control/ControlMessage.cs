@@ -1,6 +1,4 @@
 using System.Buffers.Binary;
-using System.Net;
-using System.Net.Sockets;
 using System.Text;
 
 namespace Protocol.Control;
@@ -12,8 +10,7 @@ public enum ControlCommandType : byte
     StopStream  = 0x03,
     SetQuality  = 0x04,
     Disconnect  = 0x05,
-    SwitchMode  = 0x06,
-    UdpProbeAck = 0x07
+    SwitchMode  = 0x06
 }
 
 public enum ControlResponseType : byte
@@ -46,74 +43,20 @@ public static class ControlProtocol
         return buf;
     }
 
-    public static byte[] CmdConnect(ushort viewerUdpPort, string targetHostIp = "")
+    public static byte[] CmdConnect(ushort viewerUdpPort)
     {
-        byte[] ipBytes = string.IsNullOrEmpty(targetHostIp) ? [] : Encoding.UTF8.GetBytes(targetHostIp);
-        var payload = new byte[2 + ipBytes.Length];
-        BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(0, 2), viewerUdpPort);
-        if (ipBytes.Length > 0)
-        {
-            ipBytes.CopyTo(payload, 2);
-        }
+        var payload = new byte[2];
+        BinaryPrimitives.WriteUInt16LittleEndian(payload, viewerUdpPort);
         return BuildCommand(ControlCommandType.Connect, payload);
     }
 
-    public static (ushort UdpPort, string TargetHostIp) ParseConnect(ReadOnlySpan<byte> payload)
-    {
-        ushort port = 9000;
-        string targetHostIp = "";
-        if (payload.Length >= 2)
-        {
-            port = BinaryPrimitives.ReadUInt16LittleEndian(payload[0..2]);
-            if (payload.Length > 2)
-            {
-                targetHostIp = Encoding.UTF8.GetString(payload[2..]).Trim();
-            }
-        }
-        return (port, targetHostIp);
-    }
+    public static ushort ParseConnect(ReadOnlySpan<byte> payload) =>
+        payload.Length >= 2 ? BinaryPrimitives.ReadUInt16LittleEndian(payload[0..2]) : (ushort)9000;
 
-    public static HashSet<string> GetLocalHostIps()
-    {
-        var ips = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "127.0.0.1", "localhost", "::1"
-        };
-
-        try
-        {
-            var hostName = Dns.GetHostName();
-            ips.Add(hostName);
-            var addresses = Dns.GetHostAddresses(hostName);
-            foreach (var addr in addresses)
-            {
-                if (addr.AddressFamily == AddressFamily.InterNetwork || addr.AddressFamily == AddressFamily.InterNetworkV6)
-                {
-                    ips.Add(addr.ToString());
-                }
-            }
-
-            foreach (var ni in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
-            {
-                if (ni.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up)
-                {
-                    foreach (var u in ni.GetIPProperties().UnicastAddresses)
-                    {
-                        ips.Add(u.Address.ToString());
-                    }
-                }
-            }
-        }
-        catch { }
-
-        return ips;
-    }
-
-    public static byte[] CmdStart() => BuildCommand(ControlCommandType.StartStream);
-    public static byte[] CmdStop() => BuildCommand(ControlCommandType.StopStream);
+    public static byte[] CmdStart()         => BuildCommand(ControlCommandType.StartStream);
+    public static byte[] CmdStop()          => BuildCommand(ControlCommandType.StopStream);
     public static byte[] CmdQuality(byte q) => BuildCommand(ControlCommandType.SetQuality, [q]);
-    public static byte[] CmdDisconnect() => BuildCommand(ControlCommandType.Disconnect);
-    public static byte[] CmdUdpProbeAck() => BuildCommand(ControlCommandType.UdpProbeAck);
+    public static byte[] CmdDisconnect()    => BuildCommand(ControlCommandType.Disconnect);
 
     public static byte[] CmdSwitchMode(byte mode) => BuildCommand(ControlCommandType.SwitchMode, [mode]);
 
@@ -140,9 +83,11 @@ public static class ControlProtocol
         return (ok, msg);
     }
 
-    public static byte[] RespInfo(string text) => BuildResponse(ControlResponseType.Info, Encoding.UTF8.GetBytes(text));
+    public static byte[] RespInfo(string text) =>
+        BuildResponse(ControlResponseType.Info, Encoding.UTF8.GetBytes(text));
 
-    public static async Task<(byte Type, byte[] Payload)?> ReadMessageAsync(System.Net.Sockets.NetworkStream stream, CancellationToken ct = default)
+    public static async Task<(byte Type, byte[] Payload)?> ReadMessageAsync(
+        System.Net.Sockets.NetworkStream stream, CancellationToken ct = default)
     {
         var header = new byte[2];
         if (!await ReadExactAsync(stream, header, ct)) return null;
@@ -155,7 +100,8 @@ public static class ControlProtocol
         return (type, payload);
     }
 
-    private static async Task<bool> ReadExactAsync(System.Net.Sockets.NetworkStream stream, byte[] buf, CancellationToken ct)
+    private static async Task<bool> ReadExactAsync(
+        System.Net.Sockets.NetworkStream stream, byte[] buf, CancellationToken ct)
     {
         int offset = 0;
         while (offset < buf.Length)

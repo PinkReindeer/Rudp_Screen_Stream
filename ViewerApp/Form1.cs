@@ -27,37 +27,34 @@ public partial class Form1 : Form
     private readonly VideoCanvas _canvas = new() { Dock = DockStyle.Fill };
     private readonly Panel _statusBar = new() { Dock = DockStyle.Bottom, Height = 34, BackColor = Color.FromArgb(11, 18, 32) };
 
-    private readonly Label _lblHost = new() { Text = "Host IP:", ForeColor = TextPrimary, Font = new Font("Segoe UI", 9.5f), Location = new Point(16, 12), Size = new Size(56, 20) };
+    private readonly Label _lblHost = new() { Text = "Host IP:", AutoSize = true, ForeColor = TextPrimary, Font = new Font("Segoe UI", 9.5f) };
     private readonly TextBox _txtHostIp = new()
     {
         Text = "127.0.0.1",
-        Location = new Point(74, 9),
         Size = new Size(110, 26),
         BackColor = InputBg,
         ForeColor = TextPrimary,
         BorderStyle = BorderStyle.FixedSingle,
         Font = new Font("Segoe UI", 9.5f)
     };
-    private readonly Label _lblUdp = new() { Text = "UDP:", ForeColor = TextPrimary, Font = new Font("Segoe UI", 9.5f), Location = new Point(196, 12), Size = new Size(36, 20) };
+    private readonly Label _lblUdp = new() { Text = "UDP:", AutoSize = true, ForeColor = TextPrimary, Font = new Font("Segoe UI", 9.5f) };
     private readonly NumericUpDown _numUdpPort = new()
     {
         Minimum = 1000,
         Maximum = 65535,
         Value = 9000,
-        Location = new Point(236, 9),
         Size = new Size(72, 26),
         BackColor = InputBg,
         ForeColor = TextPrimary,
         BorderStyle = BorderStyle.FixedSingle,
         Font = new Font("Segoe UI", 9.5f)
     };
-    private readonly Label _lblTcp = new() { Text = "TCP:", ForeColor = TextPrimary, Font = new Font("Segoe UI", 9.5f), Location = new Point(320, 12), Size = new Size(34, 20) };
+    private readonly Label _lblTcp = new() { Text = "TCP:", AutoSize = true, ForeColor = TextPrimary, Font = new Font("Segoe UI", 9.5f) };
     private readonly NumericUpDown _numTcpPort = new()
     {
         Minimum = 1000,
         Maximum = 65535,
         Value = 9001,
-        Location = new Point(356, 9),
         Size = new Size(72, 26),
         BackColor = InputBg,
         ForeColor = TextPrimary,
@@ -87,13 +84,12 @@ public partial class Form1 : Form
         Enabled = false
     };
 
-    private readonly Label _lblQuality = new() { Text = "Quality:", ForeColor = TextPrimary, Font = new Font("Segoe UI", 9.5f), Location = new Point(16, 48), Size = new Size(54, 20) };
+    private readonly Label _lblQuality = new() { Text = "Quality:", AutoSize = true, ForeColor = TextPrimary, Font = new Font("Segoe UI", 9.5f) };
     private readonly DarkSlider _trkQuality = new()
     {
         Minimum = 10,
         Maximum = 100,
         Value = 85,
-        Location = new Point(74, 46),
         Size = new Size(110, 22),
         Enabled = false,
         TrackColor = Color.FromArgb(34, 50, 73),
@@ -103,28 +99,25 @@ public partial class Form1 : Form
     private readonly Label _lblQualityValue = new()
     {
         Text = "85%",
+        AutoSize = true,
         ForeColor = AccentCyan,
-        Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
-        Location = new Point(190, 48),
-        Size = new Size(42, 20)
+        Font = new Font("Segoe UI", 9.5f, FontStyle.Bold)
     };
-    private readonly Label _lblMode = new() { Text = "Mode:", ForeColor = TextPrimary, Font = new Font("Segoe UI", 9.5f), Location = new Point(246, 48), Size = new Size(46, 20) };
+    private readonly Label _lblMode = new() { Text = "Mode:", AutoSize = true, ForeColor = TextPrimary, Font = new Font("Segoe UI", 9.5f) };
     private readonly RadioButton _rbRudpMode = new()
     {
         Text = "RUDP",
         Checked = true,
+        AutoSize = true,
         ForeColor = TextPrimary,
-        Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
-        Location = new Point(296, 46),
-        Size = new Size(76, 24)
+        Font = new Font("Segoe UI", 9.5f, FontStyle.Bold)
     };
     private readonly RadioButton _rbTcpMode = new()
     {
         Text = "TCP",
+        AutoSize = true,
         ForeColor = TextPrimary,
-        Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
-        Location = new Point(378, 46),
-        Size = new Size(66, 24)
+        Font = new Font("Segoe UI", 9.5f, FontStyle.Bold)
     };
 
     private readonly ModernButton _btnStart = new()
@@ -223,6 +216,19 @@ public partial class Form1 : Form
         int pad = 16;
         int w = _topToolbar.ClientSize.Width;
 
+        int curX = pad;
+        _lblHost.Location = new Point(curX, 12);
+        curX = _lblHost.Right + 6;
+        _txtHostIp.Location = new Point(curX, 9);
+        curX = _txtHostIp.Right + 14;
+        _lblUdp.Location = new Point(curX, 12);
+        curX = _lblUdp.Right + 6;
+        _numUdpPort.Location = new Point(curX, 9);
+        curX = _numUdpPort.Right + 14;
+        _lblTcp.Location = new Point(curX, 12);
+        curX = _lblTcp.Right + 6;
+        _numTcpPort.Location = new Point(curX, 9);
+
         int discX = w - pad - _btnDisconnect.Width;
         int connX = discX - 10 - _btnConnect.Width;
         if (connX < _numTcpPort.Right + 12)
@@ -232,6 +238,19 @@ public partial class Form1 : Form
         }
         _btnConnect.Location = new Point(connX, 7);
         _btnDisconnect.Location = new Point(discX, 7);
+
+        int row2X = pad;
+        _lblQuality.Location = new Point(row2X, 48);
+        row2X = _lblQuality.Right + 6;
+        _trkQuality.Location = new Point(row2X, 46);
+        row2X = _trkQuality.Right + 6;
+        _lblQualityValue.Location = new Point(row2X, 48);
+        row2X = _lblQualityValue.Right + 16;
+        _lblMode.Location = new Point(row2X, 48);
+        row2X = _lblMode.Right + 8;
+        _rbRudpMode.Location = new Point(row2X, 46);
+        row2X = _rbRudpMode.Right + 12;
+        _rbTcpMode.Location = new Point(row2X, 46);
 
         int stopX = w - pad - _btnStop.Width;
         int startX = stopX - 10 - _btnStart.Width;

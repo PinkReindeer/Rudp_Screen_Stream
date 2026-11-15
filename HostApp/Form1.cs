@@ -30,7 +30,7 @@ public partial class Form1 : Form
 
     private readonly ModernCard _cardNet = new()
     {
-        CardIcon = "📶",
+        CardIcon = "wifi",
         Title = "Network Configuration",
         StatusBadge = "● Ready",
         StatusBadgeColor = SuccessGreen
@@ -42,9 +42,31 @@ public partial class Form1 : Form
     };
     private readonly ModernCard _cardCtrl = new()
     {
-        CardIcon = "🎛️",
+        CardIcon = "sliders",
         Title = "Stream Controls",
         PillBadge = "85%"
+    };
+
+    private readonly Label _lblIp = new()
+    {
+        Text = "Viewer IP:",
+        AutoSize = true,
+        ForeColor = TextPrimary,
+        Font = new Font("Segoe UI", 9.5f)
+    };
+    private readonly Label _lblUdp = new()
+    {
+        Text = "UDP:",
+        AutoSize = true,
+        ForeColor = TextPrimary,
+        Font = new Font("Segoe UI", 9.5f)
+    };
+    private readonly Label _lblTcp = new()
+    {
+        Text = "TCP:",
+        AutoSize = true,
+        ForeColor = TextPrimary,
+        Font = new Font("Segoe UI", 9.5f)
     };
 
     private readonly TextBox _txtViewerIp = new()
@@ -183,81 +205,13 @@ public partial class Form1 : Form
         _tcpServer.Start((int)_numTcpPort.Value);
     }
 
-    private (bool Valid, string Error) ValidateIncomingClient(IPAddress clientIp, ushort clientUdpPort, string targetHostIp)
-    {
-        var validHostIps = ControlProtocol.GetLocalHostIps();
-        if (!string.IsNullOrEmpty(targetHostIp) && !validHostIps.Contains(targetHostIp))
-        {
-            return (false, $"Host IP mismatch: Viewer dialed '{targetHostIp}', but this Host IP is {string.Join(" or ", validHostIps)}!");
-        }
-
-        string configuredIpStr = _txtViewerIp.Text.Trim();
-        if (!IPAddress.TryParse(configuredIpStr, out var configuredIp))
-        {
-            return (false, $"Host configuration error: Invalid Viewer IP '{configuredIpStr}'");
-        }
-
-        IPAddress normConfigured = configuredIp.IsIPv4MappedToIPv6 ? configuredIp.MapToIPv4() : configuredIp;
-        IPAddress normClient     = clientIp.IsIPv4MappedToIPv6 ? clientIp.MapToIPv4() : clientIp;
-
-        bool isLoopbackMatch = IPAddress.IsLoopback(normConfigured) && IPAddress.IsLoopback(normClient);
-        bool isAny = normConfigured.Equals(IPAddress.Any) || normConfigured.Equals(IPAddress.IPv6Any);
-
-        if (!isAny && !isLoopbackMatch && !normConfigured.Equals(normClient))
-        {
-            return (false, $"Viewer IP mismatch: Host expects Viewer IP '{normConfigured}', but connection arrived from '{normClient}'!");
-        }
-
-        ushort expectedUdpPort = (ushort)_numUdpPort.Value;
-        if (clientUdpPort != expectedUdpPort)
-        {
-            Invoke(() => _numUdpPort.Value = clientUdpPort);
-        }
-
-        return (true, string.Empty);
-    }
-
     private void BuildUi()
     {
         Controls.Add(_pnlContent);
         Controls.Add(_sidebar);
         Controls.Add(_lblStats);
 
-        var lblIp = new Label
-        {
-            Text = "Viewer IP:",
-            Location = new Point(16, 46),
-            Size = new Size(72, 22),
-            ForeColor = TextPrimary,
-            Font = new Font("Segoe UI", 9.5f)
-        };
-        _txtViewerIp.Location = new Point(94, 43);
-        _txtViewerIp.Size = new Size(160, 26);
-        _btnCopyIp.Location = new Point(260, 43);
-
-        var lblUdp = new Label
-        {
-            Text = "UDP:",
-            Location = new Point(16, 82),
-            Size = new Size(72, 22),
-            ForeColor = TextPrimary,
-            Font = new Font("Segoe UI", 9.5f)
-        };
-        _numUdpPort.Location = new Point(94, 79);
-        _numUdpPort.Size = new Size(200, 26);
-
-        var lblTcp = new Label
-        {
-            Text = "TCP:",
-            Location = new Point(16, 118),
-            Size = new Size(72, 22),
-            ForeColor = TextPrimary,
-            Font = new Font("Segoe UI", 9.5f)
-        };
-        _numTcpPort.Location = new Point(94, 115);
-        _numTcpPort.Size = new Size(200, 26);
-
-        _cardNet.Controls.AddRange([lblIp, _txtViewerIp, _btnCopyIp, lblUdp, _numUdpPort, lblTcp, _numTcpPort]);
+        _cardNet.Controls.AddRange([_lblIp, _txtViewerIp, _btnCopyIp, _lblUdp, _numUdpPort, _lblTcp, _numTcpPort]);
         _cardNet.Height = 160;
 
         _rbRudpMode.Location = new Point(16, 42);
@@ -287,6 +241,23 @@ public partial class Form1 : Form
         _cardNet.Location = new Point(pad, pad);
         _cardNet.Width = w;
 
+        int labelW = Math.Max(_lblIp.PreferredWidth, Math.Max(_lblUdp.PreferredWidth, _lblTcp.PreferredWidth)) + 8;
+        int inputX = 16 + labelW;
+        int inputW = Math.Clamp(w - inputX - 56, 120, 260);
+
+        _lblIp.Location = new Point(16, 47);
+        _txtViewerIp.Location = new Point(inputX, 43);
+        _txtViewerIp.Width = inputW;
+        _btnCopyIp.Location = new Point(_txtViewerIp.Right + 6, 43);
+
+        _lblUdp.Location = new Point(16, 83);
+        _numUdpPort.Location = new Point(inputX, 79);
+        _numUdpPort.Width = inputW + 40;
+
+        _lblTcp.Location = new Point(16, 119);
+        _numTcpPort.Location = new Point(inputX, 115);
+        _numTcpPort.Width = inputW + 40;
+
         _cardMode.Location = new Point(pad, _cardNet.Bottom + 12);
         _cardMode.Width = w;
 
@@ -311,19 +282,10 @@ public partial class Form1 : Form
 
         _btnDisconnect.Location = new Point(startW + stopW + btnGap * 2, 0);
         _btnDisconnect.Size = new Size(discW, 40);
-
-        int inputW = Math.Clamp(w - 140, 140, 280);
-        _txtViewerIp.Width = inputW - 40;
-        _btnCopyIp.Location = new Point(_txtViewerIp.Right + 6, _txtViewerIp.Top);
-        _numUdpPort.Width = inputW;
-        _numTcpPort.Width = inputW;
     }
 
     private void HookEvents()
     {
-        _tcpServer.ClientValidator = ValidateIncomingClient;
-        _tcpServer.UdpProbeSender = async ep => await _sender.SendProbeAsync(ep);
-
         _btnCopyIp.Click += (_, _) =>
         {
             if (!string.IsNullOrWhiteSpace(_txtViewerIp.Text))
@@ -364,13 +326,11 @@ public partial class Form1 : Form
         _btnStop.Click += (_, _) => StopStreaming();
         _btnDisconnect.Click += (_, _) => _tcpServer.DisconnectClient();
 
-        _tcpServer.ClientConnected += (remoteEp, viewerUdpPort) => Invoke(() =>
+        _tcpServer.ClientConnected += clientUdpEp => Invoke(() =>
         {
-            var normClient = remoteEp.Address.IsIPv4MappedToIPv6 ? remoteEp.Address.MapToIPv4() : remoteEp.Address;
-            _connectedClientEndpoint = new IPEndPoint(normClient, viewerUdpPort);
-
-            _txtViewerIp.Text = normClient.ToString();
-            _numUdpPort.Value = viewerUdpPort;
+            _connectedClientEndpoint = clientUdpEp;
+            _txtViewerIp.Text = clientUdpEp.Address.ToString();
+            _numUdpPort.Value = clientUdpEp.Port;
             _cardNet.StatusBadge = "● Connected";
             _cardNet.StatusBadgeColor = SuccessGreen;
 

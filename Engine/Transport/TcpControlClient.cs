@@ -46,7 +46,7 @@ public sealed class TcpControlClient : IDisposable
             _stream = stream;
         }
 
-        await stream.WriteAsync(ControlProtocol.CmdConnect(myUdpPort, host), connectCts.Token);
+        await stream.WriteAsync(ControlProtocol.CmdConnect(myUdpPort), connectCts.Token);
 
         var resp = await ControlProtocol.ReadMessageAsync(stream, connectCts.Token);
         if (resp == null)
@@ -78,8 +78,6 @@ public sealed class TcpControlClient : IDisposable
         _cts = new CancellationTokenSource();
         _ = Task.Run(() => ReadLoopAsync(_cts.Token));
     }
-
-    public Task SendUdpProbeAckAsync(CancellationToken ct = default) => SendAsync(ControlProtocol.CmdUdpProbeAck(), ct);
 
     public Task SendStartStreamAsync(CancellationToken ct = default) => SendAsync(ControlProtocol.CmdStart(), ct);
 

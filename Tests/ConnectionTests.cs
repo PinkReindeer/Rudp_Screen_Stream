@@ -15,17 +15,9 @@ public class ConnectionTests
         int udpPort = 19000;
 
         using var server = new TcpControlServer(tcpPort);
-        using var sender = new UdpFrameSender();
-        server.UdpProbeSender = async ep => await sender.SendProbeAsync(ep);
         server.Start();
 
-        using var receiver = new UdpFrameReceiver(udpPort);
         using var client = new TcpControlClient();
-
-        receiver.ProbeReceived += async _ =>
-        {
-            await client.SendUdpProbeAckAsync();
-        };
 
         bool clientConnectedEventFired = false;
         client.Connected += () => clientConnectedEventFired = true;
@@ -45,24 +37,13 @@ public class ConnectionTests
 
         using var server = new TcpControlServer(tcpPort);
         using var sender = new UdpFrameSender();
-        server.UdpProbeSender = async ep => await sender.SendProbeAsync(ep);
 
         IPEndPoint? clientUdpEndpoint = null;
-        server.ClientConnected += (remoteEp, viewerUdpPort) =>
-        {
-            var normIp = remoteEp.Address.IsIPv4MappedToIPv6 ? remoteEp.Address.MapToIPv4() : remoteEp.Address;
-            clientUdpEndpoint = new IPEndPoint(normIp, viewerUdpPort);
-        };
-
+        server.ClientConnected += clientUdpEp => clientUdpEndpoint = clientUdpEp;
         server.Start();
 
         using var receiver = new UdpFrameReceiver(udpPort);
         using var client = new TcpControlClient();
-
-        receiver.ProbeReceived += async _ =>
-        {
-            await client.SendUdpProbeAckAsync();
-        };
 
         await client.ConnectAsync("127.0.0.1", tcpPort, (ushort)udpPort);
         Assert.IsTrue(client.IsConnected);
@@ -119,17 +100,9 @@ public class ConnectionTests
         int udpPort = 19012;
 
         using var server = new TcpControlServer(tcpPort);
-        using var sender = new UdpFrameSender();
-        server.UdpProbeSender = async ep => await sender.SendProbeAsync(ep);
         server.Start();
 
-        using var receiver = new UdpFrameReceiver(udpPort);
         using var client = new TcpControlClient();
-
-        receiver.ProbeReceived += async _ =>
-        {
-            await client.SendUdpProbeAckAsync();
-        };
 
         byte lastModeReceived = 0xFF;
         var modeTcs = new TaskCompletionSource<byte>();

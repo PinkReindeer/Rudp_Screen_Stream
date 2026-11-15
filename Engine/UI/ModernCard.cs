@@ -100,11 +100,39 @@ public class ModernCard : Panel
         float textX = 14;
         if (!string.IsNullOrEmpty(_cardIcon))
         {
-            using var iconFont = new Font("Segoe UI", 11f);
-            using var iconBrush = new SolidBrush(Color.FromArgb(56, 189, 248));
-            e.Graphics.DrawString(_cardIcon, iconFont, iconBrush, new PointF(14, 11));
-            var iconSize = e.Graphics.MeasureString(_cardIcon, iconFont);
-            textX += iconSize.Width + 4;
+            if (_cardIcon == "wifi")
+            {
+                using var pen = new Pen(Color.FromArgb(56, 189, 248), 1.8f);
+                pen.StartCap = LineCap.Round;
+                pen.EndCap = LineCap.Round;
+                e.Graphics.DrawArc(pen, 14, 12, 18, 18, 225, 90);
+                e.Graphics.DrawArc(pen, 17, 15, 12, 12, 225, 90);
+                using var dotBrush = new SolidBrush(Color.FromArgb(56, 189, 248));
+                e.Graphics.FillEllipse(dotBrush, 21.5f, 22, 3, 3);
+                textX = 40;
+            }
+            else if (_cardIcon == "sliders")
+            {
+                using var pen = new Pen(Color.FromArgb(56, 189, 248), 1.8f);
+                pen.StartCap = LineCap.Round;
+                pen.EndCap = LineCap.Round;
+                e.Graphics.DrawLine(pen, 14, 15, 30, 15);
+                e.Graphics.DrawLine(pen, 14, 20, 30, 20);
+                e.Graphics.DrawLine(pen, 14, 25, 30, 25);
+                using var dotBrush = new SolidBrush(Color.FromArgb(56, 189, 248));
+                e.Graphics.FillRectangle(dotBrush, 17, 13, 3, 4);
+                e.Graphics.FillRectangle(dotBrush, 24, 18, 3, 4);
+                e.Graphics.FillRectangle(dotBrush, 19, 23, 3, 4);
+                textX = 38;
+            }
+            else
+            {
+                using var iconFont = new Font("Segoe UI", 11f);
+                using var iconBrush = new SolidBrush(Color.FromArgb(56, 189, 248));
+                e.Graphics.DrawString(_cardIcon, iconFont, iconBrush, new PointF(14, 11));
+                var iconSize = e.Graphics.MeasureString(_cardIcon, iconFont);
+                textX += iconSize.Width + 4;
+            }
         }
 
         if (!string.IsNullOrEmpty(_title))
